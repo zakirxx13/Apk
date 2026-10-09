@@ -1,13 +1,12 @@
-name: APK Mod Builder
+name: Authorized APK Mod Builder
 
 on:
   workflow_dispatch:
     inputs:
 
-      drive_file_id:
-        description: "Google Drive APK File ID"
+      apk_url:
+        description: "Direct URL of your authorized APK"
         required: true
-        default: "1sYmlBdEF4kEB8wNbye5d8PXjt05qK1uW"
         type: string
 
       new_package:
@@ -22,23 +21,14 @@ on:
         default: "Modified App"
         type: string
 
-      language:
-        description: "Translation"
-        required: true
-        default: "none"
-        type: choice
-        options:
-          - none
-          - bn
-
       find_text:
-        description: "Text to replace (optional)"
+        description: "Text to replace"
         required: false
         default: ""
         type: string
 
       replace_text:
-        description: "Replacement text (optional)"
+        description: "Replacement text"
         required: false
         default: ""
         type: string
@@ -49,35 +39,34 @@ permissions:
 
 
 jobs:
-
   build-apk:
 
     runs-on: ubuntu-latest
 
     steps:
 
-      # ============================================================
-      # 1. CHECKOUT
-      # ============================================================
+      # ==========================================================
+      # CHECKOUT
+      # ==========================================================
 
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ============================================================
-      # 2. JAVA
-      # ============================================================
+      # ==========================================================
+      # JAVA
+      # ==========================================================
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
 
-      # ============================================================
-      # 3. PYTHON
-      # ============================================================
+      # ==========================================================
+      # PYTHON
+      # ==========================================================
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -85,9 +74,9 @@ jobs:
           python-version: "3.12"
 
 
-      # ============================================================
-      # 4. CREATE DIRECTORIES
-      # ============================================================
+      # ==========================================================
+      # DIRECTORIES
+      # ==========================================================
 
       - name: Create directories
         run: |
@@ -96,122 +85,110 @@ jobs:
           mkdir -p input
           mkdir -p output
           mkdir -p tools
-          mkdir -p translations/bn/values
 
-          echo "Directories created."
+          echo "Directories ready."
 
 
-      # ============================================================
-      # 5. DOWNLOAD LATEST APKTOOL
-      # ============================================================
+      # ==========================================================
+      # APKTOOL
+      # ==========================================================
 
       - name: Download latest APKTool
         run: |
           set -e
 
-          echo "Finding latest APKTool release..."
-
           APKTOOL_URL=$(python3 - <<'PY'
           import json
           import urllib.request
 
-          api = "https://api.github.com/repos/iBotPeaches/Apktool/releases/latest"
+          url = "https://api.github.com/repos/iBotPeaches/Apktool/releases/latest"
 
-          req = urllib.request.Request(
-              api,
+          request = urllib.request.Request(
+              url,
               headers={
                   "User-Agent": "GitHub-Actions"
               }
           )
 
-          with urllib.request.urlopen(req) as response:
+          with urllib.request.urlopen(request) as response:
               data = json.load(response)
 
-          found = None
+          jar = None
 
           for asset in data.get("assets", []):
               name = asset.get("name", "").lower()
 
-              if (
-                  name.endswith(".jar")
-                  and "apktool" in name
-              ):
-                  found = asset["browser_download_url"]
+              if name.endswith(".jar") and "apktool" in name:
+                  jar = asset["browser_download_url"]
                   break
 
-          if not found:
+          if not jar:
               raise SystemExit(
-                  "Could not find APKTool JAR."
+                  "APKTool JAR not found."
               )
 
-          print(found)
+          print(jar)
           PY
           )
 
-          echo "APKTool URL:"
+          echo "Downloading:"
           echo "$APKTOOL_URL"
 
           curl -fL \
             --retry 3 \
             --retry-delay 2 \
-            -o apktool.jar \
-            "$APKTOOL_URL"
+            "$APKTOOL_URL" \
+            -o apktool.jar
+
+          test -s apktool.jar
 
           echo ""
-          echo "APKTool file:"
+          echo "APKTool:"
           ls -lh apktool.jar
 
           echo ""
-          echo "File type:"
-          file apktool.jar
-
-          echo ""
-          echo "APKTool version:"
           java -jar apktool.jar --version
 
 
-      # ============================================================
-      # 6. INSTALL GDOWN
-      # ============================================================
+      # ==========================================================
+      # DOWNLOAD APK
+      # ==========================================================
 
-      - name: Install gdown
-        run: |
-          set -e
-
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --upgrade gdown
-
-          gdown --version
-
-
-      # ============================================================
-      # 7. DOWNLOAD APK FROM GOOGLE DRIVE
-      # ============================================================
-
-      - name: Download APK from Google Drive
+      - name: Download authorized APK
         env:
-          DRIVE_FILE_ID: ${{ inputs.drive_file_id }}
+          APK_URL: ${{ inputs.apk_url }}
         run: |
           set -e
 
-          echo "Downloading APK from Google Drive..."
+          echo "Downloading APK..."
 
-          gdown \
-            --fuzzy "https://drive.google.com/file/d/${DRIVE_FILE_ID}/view" \
-            -O input/source.apk
+          curl -fL \
+            --retry 3 \
+            --retry-delay 2 \
+            --connect-timeout 30 \
+            --max-time 600 \
+            -A "Mozilla/5.0" \
+            "$APK_URL" \
+            -o input/source.apk
 
           echo ""
-          echo "Downloaded file:"
+          echo "Downloaded APK:"
           ls -lh input/source.apk
 
           echo ""
           echo "File type:"
           file input/source.apk
 
-          echo ""
-          echo "Checking file..."
-
           test -s input/source.apk
+
+
+      # ==========================================================
+      # VERIFY APK
+      # ==========================================================
+
+      - name: Verify APK
+        run: |
+          set -e
 
           python3 - <<'PY'
           import zipfile
@@ -220,44 +197,94 @@ jobs:
 
           if not zipfile.is_zipfile(apk):
               raise SystemExit(
-                  "ERROR: Downloaded file is not a valid APK/ZIP."
+                  "ERROR: Downloaded file is not a valid APK."
               )
 
-          print("OK: Valid APK/ZIP detected.")
+          print("Valid APK detected.")
           PY
 
 
-      # ============================================================
-      # 8. CREATE PACKAGE MODIFIER
-      # ============================================================
+      # ==========================================================
+      # DECODE
+      # ==========================================================
+
+      - name: Decode APK
+        run: |
+          set -e
+
+          echo "Decoding APK..."
+
+          java -jar apktool.jar \
+            d input/source.apk \
+            -o decoded \
+            --force
+
+          echo ""
+          echo "Decode completed."
+
+
+      # ==========================================================
+      # DETECT PACKAGE
+      # ==========================================================
+
+      - name: Detect package
+        run: |
+          set -e
+
+          python3 - <<'PY'
+          import re
+
+          path = "decoded/AndroidManifest.xml"
+
+          with open(
+              path,
+              "r",
+              encoding="utf-8"
+          ) as f:
+              data = f.read()
+
+          match = re.search(
+              r'<manifest[^>]*\bpackage="([^"]+)"',
+              data
+          )
+
+          if not match:
+              raise SystemExit(
+                  "Original package not found."
+              )
+
+          print(
+              "Original package:",
+              match.group(1)
+          )
+          PY
+
+
+      # ==========================================================
+      # PACKAGE MODIFIER
+      # ==========================================================
 
       - name: Create package modifier
         run: |
           cat > tools/package_modifier.py <<'PY'
           import os
           import re
-          import shutil
-          import sys
 
           decoded = "decoded"
           new_package = os.environ["NEW_PACKAGE"]
 
-          pattern = r"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$"
-
-          if not re.match(pattern, new_package):
+          if not re.match(
+              r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$",
+              new_package
+          ):
               raise SystemExit(
-                  f"Invalid package name: {new_package}"
+                  "Invalid package name."
               )
 
           manifest = os.path.join(
               decoded,
               "AndroidManifest.xml"
           )
-
-          if not os.path.exists(manifest):
-              raise SystemExit(
-                  "AndroidManifest.xml not found."
-              )
 
           with open(
               manifest,
@@ -273,25 +300,26 @@ jobs:
 
           if not match:
               raise SystemExit(
-                  "Could not detect original package."
+                  "Could not detect old package."
               )
 
           old_package = match.group(1)
 
-          print("Original package:")
-          print(old_package)
+          print(
+              "Old package:",
+              old_package
+          )
 
-          print("New package:")
-          print(new_package)
+          print(
+              "New package:",
+              new_package
+          )
 
           if old_package == new_package:
-              print("Package is already the same.")
-              sys.exit(0)
+              print("Package unchanged.")
+              raise SystemExit(0)
 
-          # --------------------------------------------------------
-          # Replace package references inside text files
-          # --------------------------------------------------------
-
+          # Replace package references in text files
           for root, dirs, files in os.walk(decoded):
 
               for filename in files:
@@ -307,42 +335,33 @@ jobs:
                           "r",
                           encoding="utf-8"
                       ) as f:
-                          data = f.read()
+                          content = f.read()
+
                   except (
                       UnicodeDecodeError,
                       PermissionError
                   ):
                       continue
 
-                  if old_package in data:
+                  if old_package in content:
 
-                      new_data = data.replace(
+                      content = content.replace(
                           old_package,
                           new_package
                       )
 
-                      if new_data != data:
+                      with open(
+                          path,
+                          "w",
+                          encoding="utf-8"
+                      ) as f:
+                          f.write(content)
 
-                          with open(
-                              path,
-                              "w",
-                              encoding="utf-8"
-                          ) as f:
-                              f.write(new_data)
-
-          # --------------------------------------------------------
-          # Update manifest package
-          # --------------------------------------------------------
-
-          manifest_text = re.sub(
-              r'(<manifest[^>]*\bpackage=")'
-              + re.escape(old_package)
-              + r'(")',
-              r'\g<1>'
-              + new_package
-              + r'\g<2>',
-              manifest_text,
-              count=1
+          # Manifest
+          manifest_text = manifest_text.replace(
+              f'package="{old_package}"',
+              f'package="{new_package}"',
+              1
           )
 
           with open(
@@ -352,109 +371,44 @@ jobs:
           ) as f:
               f.write(manifest_text)
 
-          # --------------------------------------------------------
-          # Rename smali package directories
-          # --------------------------------------------------------
-
-          old_path = old_package.replace(
-              ".",
-              os.sep
+          print(
+              "Package modification completed."
           )
-
-          new_path = new_package.replace(
-              ".",
-              os.sep
-          )
-
-          for root, dirs, files in os.walk(
-              decoded,
-              topdown=False
-          ):
-
-              for directory in dirs:
-
-                  if not root.startswith(
-                      os.path.join(decoded, "smali")
-                  ):
-                      continue
-
-                  full_dir = os.path.join(
-                      root,
-                      directory
-                  )
-
-                  normalized = full_dir.replace(
-                      os.sep,
-                      "/"
-                  )
-
-                  old_normalized = old_path.replace(
-                      os.sep,
-                      "/"
-                  )
-
-                  if normalized.endswith(
-                      old_normalized
-                  ):
-
-                      parent = os.path.dirname(
-                          full_dir
-                      )
-
-                      destination = os.path.join(
-                          parent,
-                          new_path
-                      )
-
-                      os.makedirs(
-                          os.path.dirname(destination),
-                          exist_ok=True
-                      )
-
-                      if os.path.exists(
-                          destination
-                      ):
-                          shutil.copytree(
-                              full_dir,
-                              destination,
-                              dirs_exist_ok=True
-                          )
-                          shutil.rmtree(
-                              full_dir
-                          )
-                      else:
-                          shutil.move(
-                              full_dir,
-                              destination
-                          )
-
-          print("")
-          print("Package modification completed.")
           PY
 
 
-      # ============================================================
-      # 9. CREATE APP NAME MODIFIER
-      # ============================================================
+      # ==========================================================
+      # CHANGE PACKAGE
+      # ==========================================================
 
-      - name: Create app name modifier
+      - name: Change package
+        env:
+          NEW_PACKAGE: ${{ inputs.new_package }}
         run: |
-          cat > tools/app_name.py <<'PY'
+          python3 tools/package_modifier.py
+
+
+      # ==========================================================
+      # CHANGE APP NAME
+      # ==========================================================
+
+      - name: Change application name
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          set -e
+
+          python3 - <<'PY'
           import os
           import re
 
           decoded = "decoded"
-          new_name = os.environ["APP_NAME"]
+          app_name = os.environ["APP_NAME"]
 
           manifest = os.path.join(
               decoded,
               "AndroidManifest.xml"
           )
-
-          if not os.path.exists(manifest):
-              raise SystemExit(
-                  "AndroidManifest.xml not found."
-              )
 
           with open(
               manifest,
@@ -463,10 +417,10 @@ jobs:
           ) as f:
               data = f.read()
 
-          # Direct literal label
+          # Change literal android:label
           data = re.sub(
               r'android:label="[^"]*"',
-              f'android:label="{new_name}"',
+              f'android:label="{app_name}"',
               data,
               count=1
           )
@@ -478,87 +432,80 @@ jobs:
           ) as f:
               f.write(data)
 
-          # Update app_name where it exists
-          values_root = os.path.join(
-              decoded,
-              "res"
+          # Change app_name resource if present
+          for root, dirs, files in os.walk(
+              os.path.join(decoded, "res")
+          ):
+
+              for filename in files:
+
+                  if filename != "strings.xml":
+                      continue
+
+                  path = os.path.join(
+                      root,
+                      filename
+                  )
+
+                  try:
+                      with open(
+                          path,
+                          "r",
+                          encoding="utf-8"
+                      ) as f:
+                          text = f.read()
+
+                  except UnicodeDecodeError:
+                      continue
+
+                  new_text = re.sub(
+                      r'(<string\s+name="app_name"[^>]*>).*?(</string>)',
+                      r'\g<1>' + app_name + r'\g<2>',
+                      text,
+                      flags=re.DOTALL
+                  )
+
+                  if new_text != text:
+
+                      with open(
+                          path,
+                          "w",
+                          encoding="utf-8"
+                      ) as f:
+                          f.write(new_text)
+
+          print(
+              "Application name:",
+              app_name
           )
-
-          if os.path.exists(values_root):
-
-              for root, dirs, files in os.walk(
-                  values_root
-              ):
-
-                  for filename in files:
-
-                      if filename != "strings.xml":
-                          continue
-
-                      path = os.path.join(
-                          root,
-                          filename
-                      )
-
-                      try:
-                          with open(
-                              path,
-                              "r",
-                              encoding="utf-8"
-                          ) as f:
-                              text = f.read()
-                      except UnicodeDecodeError:
-                          continue
-
-                      new_text = re.sub(
-                          r'(<string\s+name="app_name"[^>]*>).*?(</string>)',
-                          r'\g<1>' + new_name + r'\g<2>',
-                          text,
-                          flags=re.DOTALL
-                      )
-
-                      if new_text != text:
-
-                          with open(
-                              path,
-                              "w",
-                              encoding="utf-8"
-                          ) as f:
-                              f.write(new_text)
-
-          print("Application name changed to:")
-          print(new_name)
           PY
 
 
-      # ============================================================
-      # 10. CREATE TEXT PATCHER
-      # ============================================================
+      # ==========================================================
+      # TEXT REPLACEMENT
+      # ==========================================================
 
-      - name: Create text patcher
+      - name: Replace text
+        env:
+          FIND_TEXT: ${{ inputs.find_text }}
+          REPLACE_TEXT: ${{ inputs.replace_text }}
         run: |
-          cat > tools/text_patcher.py <<'PY'
+          set -e
+
+          if [ -z "$FIND_TEXT" ]; then
+            echo "No text replacement requested."
+            exit 0
+          fi
+
+          python3 - <<'PY'
           import os
 
-          find_text = os.environ.get(
-              "FIND_TEXT",
-              ""
-          )
+          find_text = os.environ["FIND_TEXT"]
+          replace_text = os.environ["REPLACE_TEXT"]
 
-          replace_text = os.environ.get(
-              "REPLACE_TEXT",
-              ""
-          )
+          changed = 0
 
-          if not find_text:
-              print("No text replacement requested.")
-              raise SystemExit(0)
-
-          decoded = "decoded"
-
-          count = 0
-
-          for root, dirs, files in os.walk(decoded):
+          for root, dirs, files in os.walk("decoded"):
 
               for filename in files:
 
@@ -574,6 +521,7 @@ jobs:
                           encoding="utf-8"
                       ) as f:
                           data = f.read()
+
                   except (
                       UnicodeDecodeError,
                       PermissionError
@@ -597,269 +545,55 @@ jobs:
                       ) as f:
                           f.write(new_data)
 
-                      count += 1
+                      changed += 1
 
           print(
-              f"Text replacement completed. "
-              f"Files changed: {count}"
+              "Files changed:",
+              changed
           )
           PY
 
 
-      # ============================================================
-      # 11. CREATE BANGLA TRANSLATION TEMPLATE
-      # ============================================================
+      # ==========================================================
+      # INSPECT
+      # ==========================================================
 
-      - name: Create Bangla translation template
+      - name: Inspect modified project
         run: |
-          cat > translations/bn/values/strings.xml <<'XML'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-
-              <!--
-              Add your translations here.
-
-              Example:
-
-              <string name="hello">হ্যালো</string>
-              <string name="login">লগইন</string>
-
-              -->
-
-          </resources>
-          XML
-
-
-      # ============================================================
-      # 12. CREATE LANGUAGE MODIFIER
-      # ============================================================
-
-      - name: Create language modifier
-        run: |
-          cat > tools/language_modifier.py <<'PY'
-          import os
-          import shutil
-
-          language = os.environ.get(
-              "LANGUAGE",
-              "none"
-          )
-
-          if language == "none":
-              print("Language modification disabled.")
-              raise SystemExit(0)
-
-          source = os.path.join(
-              "translations",
-              language,
-              "values"
-          )
-
-          destination = os.path.join(
-              "decoded",
-              "res",
-              "values"
-          )
-
-          if not os.path.exists(source):
-              raise SystemExit(
-                  f"Translation source not found: {source}"
-              )
-
-          os.makedirs(
-              destination,
-              exist_ok=True
-          )
-
-          for filename in os.listdir(source):
-
-              source_file = os.path.join(
-                  source,
-                  filename
-              )
-
-              destination_file = os.path.join(
-                  destination,
-                  filename
-              )
-
-              if os.path.isfile(source_file):
-
-                  shutil.copy2(
-                      source_file,
-                      destination_file
-                  )
-
-                  print(
-                      f"Applied translation: {filename}"
-                  )
-
-          print("Language modification completed.")
-          PY
-
-
-      # ============================================================
-      # 13. DECODE APK
-      # ============================================================
-
-      - name: Decode APK
-        run: |
-          set -e
-
-          echo "Decoding APK..."
-
-          java -jar apktool.jar \
-            d input/source.apk \
-            -o decoded \
-            --force
-
-          echo ""
-          echo "Decode completed."
-
-          ls -la decoded
-
-
-      # ============================================================
-      # 14. DETECT PACKAGE
-      # ============================================================
-
-      - name: Detect original package
-        run: |
-          echo "AndroidManifest:"
-          grep -m 1 \
-            '<manifest' \
-            decoded/AndroidManifest.xml || true
-
-          echo ""
-
-          echo "Detected package:"
-
-          python3 - <<'PY'
-          import re
-
-          path = "decoded/AndroidManifest.xml"
-
-          with open(
-              path,
-              "r",
-              encoding="utf-8"
-          ) as f:
-              data = f.read()
-
-          match = re.search(
-              r'<manifest[^>]*\bpackage="([^"]+)"',
-              data
-          )
-
-          if match:
-              print(match.group(1))
-          else:
-              print("Package not detected.")
-          PY
-
-
-      # ============================================================
-      # 15. CHANGE PACKAGE
-      # ============================================================
-
-      - name: Change package name
-        env:
-          NEW_PACKAGE: ${{ inputs.new_package }}
-        run: |
-          set -e
-
-          python3 tools/package_modifier.py
-
-
-      # ============================================================
-      # 16. CHANGE APP NAME
-      # ============================================================
-
-      - name: Change application name
-        env:
-          APP_NAME: ${{ inputs.app_name }}
-        run: |
-          set -e
-
-          python3 tools/app_name.py
-
-
-      # ============================================================
-      # 17. CHANGE TEXT
-      # ============================================================
-
-      - name: Replace text
-        env:
-          FIND_TEXT: ${{ inputs.find_text }}
-          REPLACE_TEXT: ${{ inputs.replace_text }}
-        run: |
-          set -e
-
-          python3 tools/text_patcher.py
-
-
-      # ============================================================
-      # 18. LANGUAGE
-      # ============================================================
-
-      - name: Apply language modification
-        env:
-          LANGUAGE: ${{ inputs.language }}
-        run: |
-          set -e
-
-          python3 tools/language_modifier.py
-
-
-      # ============================================================
-      # 19. SHOW MODIFIED MANIFEST
-      # ============================================================
-
-      - name: Inspect modified APK project
-        run: |
-          echo "===================================="
+          echo "================================"
           echo "MODIFIED MANIFEST"
-          echo "===================================="
+          echo "================================"
 
           grep -m 1 \
             '<manifest' \
             decoded/AndroidManifest.xml || true
 
           echo ""
-          echo "===================================="
+
+          echo "================================"
           echo "SMALI DIRECTORIES"
-          echo "===================================="
+          echo "================================"
 
           find decoded \
             -maxdepth 1 \
             -type d \
             -name "smali*" \
-            -print
-
-          echo ""
-          echo "===================================="
-          echo "RESOURCE DIRECTORIES"
-          echo "===================================="
-
-          find decoded/res \
-            -maxdepth 1 \
-            -type d \
             -print || true
 
 
-      # ============================================================
-      # 20. SETUP ANDROID SDK
-      # ============================================================
+      # ==========================================================
+      # ANDROID SDK
+      # ==========================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
 
-      # ============================================================
-      # 21. INSTALL BUILD TOOLS
-      # ============================================================
+      # ==========================================================
+      # BUILD TOOLS
+      # ==========================================================
 
-      - name: Install Android build tools
+      - name: Install build tools
         run: |
           set -e
 
@@ -867,35 +601,27 @@ jobs:
             "platform-tools" \
             "build-tools;35.0.0"
 
-          echo ""
-          echo "Installed build tools:"
-          ls -la "$ANDROID_HOME/build-tools/35.0.0"
 
-
-      # ============================================================
-      # 22. REBUILD APK
-      # ============================================================
+      # ==========================================================
+      # REBUILD
+      # ==========================================================
 
       - name: Rebuild APK
         run: |
           set -e
 
-          echo "Rebuilding APK..."
-
           java -jar apktool.jar \
             b decoded \
             -o output/unsigned.apk
 
-          echo ""
-          echo "Unsigned APK:"
-          ls -lh output/unsigned.apk
-
           test -s output/unsigned.apk
 
+          ls -lh output/unsigned.apk
 
-      # ============================================================
-      # 23. CREATE TEMPORARY SIGNING KEY
-      # ============================================================
+
+      # ==========================================================
+      # SIGNING KEY
+      # ==========================================================
 
       - name: Create signing key
         run: |
@@ -911,14 +637,12 @@ jobs:
             -validity 10000 \
             -storepass android \
             -keypass android \
-            -dname "CN=APK Builder, OU=Build, O=Local, L=Dhaka, ST=Dhaka, C=BD"
-
-          ls -lh release.keystore
+            -dname "CN=Authorized APK Builder, OU=Build, O=Local, L=Dhaka, ST=Dhaka, C=BD"
 
 
-      # ============================================================
-      # 24. SIGN APK
-      # ============================================================
+      # ==========================================================
+      # SIGN
+      # ==========================================================
 
       - name: Sign APK
         run: |
@@ -932,16 +656,14 @@ jobs:
             --out output/modified.apk \
             output/unsigned.apk
 
-          echo ""
-          echo "Signed APK:"
           ls -lh output/modified.apk
 
 
-      # ============================================================
-      # 25. VERIFY APK
-      # ============================================================
+      # ==========================================================
+      # VERIFY SIGNATURE
+      # ==========================================================
 
-      - name: Verify APK signature
+      - name: Verify signature
         run: |
           set -e
 
@@ -949,13 +671,12 @@ jobs:
             --verbose \
             output/modified.apk
 
-          echo ""
-          echo "APK signature verification successful."
+          echo "Signature verification successful."
 
 
-      # ============================================================
-      # 26. VERIFY APK ZIP
-      # ============================================================
+      # ==========================================================
+      # VERIFY APK
+      # ==========================================================
 
       - name: Verify final APK
         run: |
@@ -968,21 +689,32 @@ jobs:
 
           if not zipfile.is_zipfile(apk):
               raise SystemExit(
-                  "Final APK is not a valid ZIP/APK."
+                  "Final APK is invalid."
               )
 
           print("Final APK is valid.")
           PY
 
           file output/modified.apk
-          ls -lh output/modified.apk
 
 
-      # ============================================================
-      # 27. CREATE DECODED PROJECT ZIP
-      # ============================================================
+      # ==========================================================
+      # UPLOAD APK
+      # ==========================================================
 
-      - name: Archive decoded project
+      - name: Upload modified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: modified-apk
+          path: output/modified.apk
+          if-no-files-found: error
+
+
+      # ==========================================================
+      # ZIP DECODED PROJECT
+      # ==========================================================
+
+      - name: Create decoded project archive
         run: |
           set -e
 
@@ -997,23 +729,11 @@ jobs:
           ls -lh output/decoded-apk-project.zip
 
 
-      # ============================================================
-      # 28. UPLOAD MODIFIED APK
-      # ============================================================
+      # ==========================================================
+      # UPLOAD PROJECT
+      # ==========================================================
 
-      - name: Upload modified APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: modified-apk
-          path: output/modified.apk
-          if-no-files-found: error
-
-
-      # ============================================================
-      # 29. UPLOAD DECODED PROJECT
-      # ============================================================
-
-      - name: Upload decoded APK project
+      - name: Upload decoded project
         uses: actions/upload-artifact@v4
         with:
           name: decoded-apk-project
@@ -1021,30 +741,28 @@ jobs:
           if-no-files-found: error
 
 
-      # ============================================================
-      # 30. FINAL SUMMARY
-      # ============================================================
+      # ==========================================================
+      # SUMMARY
+      # ==========================================================
 
-      - name: Build summary
+      - name: Summary
         run: |
           echo ""
-          echo "=============================================="
-          echo "             APK BUILD COMPLETE"
-          echo "=============================================="
+          echo "============================================"
+          echo "             BUILD COMPLETE"
+          echo "============================================"
           echo ""
-          echo "Original APK:"
-          echo "  input/source.apk"
+          echo "APK:"
+          echo "output/modified.apk"
           echo ""
-          echo "Modified APK:"
-          echo "  output/modified.apk"
-          echo ""
-          echo "New package:"
+          echo "Package:"
           echo "${{ inputs.new_package }}"
           echo ""
-          echo "New app name:"
+          echo "App name:"
           echo "${{ inputs.app_name }}"
           echo ""
-          echo "Language:"
-          echo "${{ inputs.language }}"
+          echo "Artifacts:"
+          echo "  modified-apk"
+          echo "  decoded-apk-project"
           echo ""
-          echo "=============================================="
+          echo "============================================"
