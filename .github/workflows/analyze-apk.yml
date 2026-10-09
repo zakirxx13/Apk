@@ -1,0 +1,628 @@
+name: Analyze Decompiled APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ---------------------------------------
+      # 1. Checkout repository
+      # ---------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      # ---------------------------------------
+      # 2. Check report directory
+      # ---------------------------------------
+      - name: Check decompiled report
+        run: |
+          set -e
+
+          if [ ! -d "report" ]; then
+            echo "ERROR: report/ directory not found."
+            exit 1
+          fi
+
+          if [ ! -f "report/AndroidManifest.xml" ]; then
+            echo "ERROR: AndroidManifest.xml not found."
+            exit 1
+          fi
+
+          echo "Decompiled APK report found."
+
+          du -sh report
+          find report -type f | wc -l
+
+
+      # ---------------------------------------
+      # 3. Create analysis script
+      # ---------------------------------------
+      - name: Create analyzer
+        run: |
+          cat > analyze_apk.py <<'PY'
+          import re
+          import os
+          import hashlib
+          from pathlib import Path
+          from collections import Counter
+
+          ROOT = Path("report")
+          OUTPUT = Path("APK_ANALYSIS.md")
+
+          manifest = ROOT / "AndroidManifest.xml"
+
+          md = []
+
+          def section(title):
+              md.append(f"\n## {title}\n")
+
+          def add(text=""):
+              md.append(text)
+
+          # =====================================
+          # Header
+          # =====================================
+
+          add("# APK Static Analysis Report")
+          add("")
+          add("> Automatically generated from the decompiled APK in `report/`.")
+          add("")
+          add("---")
+
+          # =====================================
+          # Basic information
+          # =====================================
+
+          section("1. Basic Information")
+
+          files = [
+              p for p in ROOT.rglob("*")
+              if p.is_file()
+          ]
+
+          total_files = len(files)
+
+          total_size = sum(
+              p.stat().st_size
+              for p in files
+          )
+
+          add(f"- Total files: `{total_files}`")
+          add(f"- Decompiled size: `{total_size / 1024 / 1024:.2f} MB`")
+
+          if manifest.exists():
+              manifest_hash = hashlib.sha256(
+                  manifest.read_bytes()
+              ).hexdigest()
+
+              add(
+                  f"- Manifest SHA-256: `{manifest_hash}`"
+              )
+
+          # =====================================
+          # Manifest
+          # =====================================
+
+          section("2. Android Manifest")
+
+          manifest_text = manifest.read_text(
+              encoding="utf-8",
+              errors="ignore"
+          )
+
+          package_match = re.search(
+              r'<manifest[^>]*package="([^"]+)"',
+              manifest_text
+          )
+
+          if package_match:
+              add(
+                  f"- Package: `{package_match.group(1)}`"
+              )
+          else:
+              add("- Package: not detected")
+
+          sdk_patterns = {
+              "minSdk": r'android:minSdkVersion="([^"]+)"',
+              "targetSdk": r'android:targetSdkVersion="([^"]+)"',
+              "versionCode": r'android:versionCode="([^"]+)"',
+              "versionName": r'android:versionName="([^"]+)"',
+          }
+
+          for name, pattern in sdk_patterns.items():
+              match = re.search(pattern, manifest_text)
+
+              if match:
+                  add(
+                      f"- {name}: `{match.group(1)}`"
+                  )
+
+          # =====================================
+          # Permissions
+          # =====================================
+
+          section("3. Permissions")
+
+          permissions = sorted(
+              set(
+                  re.findall(
+                      r'<uses-permission[^>]+android:name="([^"]+)"',
+                      manifest_text
+                  )
+              )
+          )
+
+          if permissions:
+              for permission in permissions:
+                  add(f"- `{permission}`")
+          else:
+              add("No permissions detected.")
+
+          # =====================================
+          # Components
+          # =====================================
+
+          section("4. Application Components")
+
+          component_patterns = {
+              "Activities": r'<activity\b[^>]*android:name="([^"]+)"',
+              "Services": r'<service\b[^>]*android:name="([^"]+)"',
+              "Receivers": r'<receiver\b[^>]*android:name="([^"]+)"',
+              "Providers": r'<provider\b[^>]*android:name="([^"]+)"',
+          }
+
+          for component_type, pattern in component_patterns.items():
+
+              values = sorted(
+                  set(
+                      re.findall(
+                          pattern,
+                          manifest_text
+                      )
+                  )
+              )
+
+              add(f"### {component_type}")
+              add("")
+
+              if values:
+                  for value in values:
+                      add(f"- `{value}`")
+              else:
+                  add("- None detected")
+
+              add("")
+
+          # =====================================
+          # Intent filters
+          # =====================================
+
+          section("5. Intent Filters")
+
+          intent_actions = sorted(
+              set(
+                  re.findall(
+                      r'<action[^>]+android:name="([^"]+)"',
+                      manifest_text
+                  )
+              )
+          )
+
+          categories = sorted(
+              set(
+                  re.findall(
+                      r'<category[^>]+android:name="([^"]+)"',
+                      manifest_text
+                  )
+              )
+          )
+
+          add("### Actions")
+          add("")
+
+          for item in intent_actions:
+              add(f"- `{item}`")
+
+          add("")
+          add("### Categories")
+          add("")
+
+          for item in categories:
+              add(f"- `{item}`")
+
+          # =====================================
+          # URLs and domains
+          # =====================================
+
+          section("6. URLs and Domains")
+
+          url_pattern = re.compile(
+              r'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]+'
+          )
+
+          urls = set()
+
+          for path in ROOT.rglob("*"):
+
+              if not path.is_file():
+                  continue
+
+              if path.stat().st_size > 10 * 1024 * 1024:
+                  continue
+
+              try:
+                  text = path.read_text(
+                      encoding="utf-8",
+                      errors="ignore"
+                  )
+              except Exception:
+                  continue
+
+              for url in url_pattern.findall(text):
+                  urls.add(url.rstrip('\'"<>);, '))
+
+          if urls:
+              for url in sorted(urls):
+                  add(f"- `{url}`")
+          else:
+              add("No HTTP/HTTPS URLs detected.")
+
+          # =====================================
+          # Native libraries
+          # =====================================
+
+          section("7. Native Libraries")
+
+          native_files = sorted(
+              p for p in ROOT.rglob("*")
+              if p.is_file()
+              and (
+                  p.suffix.lower() == ".so"
+                  or "lib/" in str(p)
+              )
+          )
+
+          if native_files:
+              for path in native_files:
+                  add(f"- `{path}`")
+          else:
+              add("No native `.so` libraries detected.")
+
+          # =====================================
+          # DEX / Smali
+          # =====================================
+
+          section("8. DEX / Smali Structure")
+
+          smali_dirs = sorted(
+              p for p in ROOT.iterdir()
+              if p.is_dir()
+              and p.name.startswith("smali")
+          )
+
+          if smali_dirs:
+              for directory in smali_dirs:
+
+                  count = len(
+                      list(directory.rglob("*.smali"))
+                  )
+
+                  add(
+                      f"- `{directory}`: "
+                      f"`{count}` smali files"
+                  )
+          else:
+              add("No smali directories detected.")
+
+          # =====================================
+          # Resource structure
+          # =====================================
+
+          section("9. Resources")
+
+          resource_dirs = sorted(
+              p for p in ROOT.iterdir()
+              if p.is_dir()
+              and p.name.startswith("res")
+          )
+
+          for directory in resource_dirs:
+
+              count = len(
+                  list(directory.rglob("*"))
+              )
+
+              add(
+                  f"- `{directory}`: "
+                  f"`{count}` entries"
+              )
+
+          # =====================================
+          # Important strings
+          # =====================================
+
+          section("10. Interesting Strings / Keywords")
+
+          keywords = [
+              "firebase",
+              "api",
+              "graphql",
+              "retrofit",
+              "okhttp",
+              "webview",
+              "exoplayer",
+              "media3",
+              "ffmpeg",
+              "youtube",
+              "cloudflare",
+              "socket",
+              "websocket",
+              "analytics",
+              "crashlytics",
+              "ads",
+              "deeplink"
+          ]
+
+          keyword_counts = Counter()
+
+          for path in ROOT.rglob("*"):
+
+              if not path.is_file():
+                  continue
+
+              if path.stat().st_size > 10 * 1024 * 1024:
+                  continue
+
+              try:
+                  text = path.read_text(
+                      encoding="utf-8",
+                      errors="ignore"
+                  ).lower()
+              except Exception:
+                  continue
+
+              for keyword in keywords:
+
+                  count = text.count(keyword)
+
+                  if count:
+                      keyword_counts[keyword] += count
+
+          if keyword_counts:
+
+              for keyword, count in sorted(
+                  keyword_counts.items()
+              ):
+                  add(
+                      f"- `{keyword}`: "
+                      f"`{count}` occurrence(s)"
+                  )
+
+          else:
+              add("No selected keywords detected.")
+
+          # =====================================
+          # File extensions
+          # =====================================
+
+          section("11. File Type Statistics")
+
+          extensions = Counter()
+
+          for path in files:
+
+              ext = path.suffix.lower()
+
+              if not ext:
+                  ext = "[no extension]"
+
+              extensions[ext] += 1
+
+          for ext, count in extensions.most_common():
+
+              add(
+                  f"- `{ext}`: `{count}`"
+              )
+
+          # =====================================
+          # Large files
+          # =====================================
+
+          section("12. Large Files")
+
+          large_files = []
+
+          for path in files:
+
+              size = path.stat().st_size
+
+              if size >= 1024 * 1024:
+                  large_files.append(
+                      (size, path)
+                  )
+
+          large_files.sort(
+              reverse=True
+          )
+
+          if large_files:
+
+              for size, path in large_files[:50]:
+
+                  add(
+                      f"- `{path}` — "
+                      f"{size / 1024 / 1024:.2f} MB"
+                  )
+
+          else:
+              add("No files larger than 1 MB.")
+
+          # =====================================
+          # Initial assessment
+          # =====================================
+
+          section("13. Initial Assessment")
+
+          findings = []
+
+          if permissions:
+              findings.append(
+                  f"{len(permissions)} Android permission(s) detected."
+              )
+
+          if intent_actions:
+              findings.append(
+                  f"{len(intent_actions)} intent action(s) detected."
+              )
+
+          if urls:
+              findings.append(
+                  f"{len(urls)} URL(s) detected."
+              )
+
+          if native_files:
+              findings.append(
+                  f"{len(native_files)} native library file(s) detected."
+              )
+
+          if smali_dirs:
+              findings.append(
+                  f"{len(smali_dirs)} smali directory set(s) detected."
+              )
+
+          if "android.permission.INTERNET" in permissions:
+              findings.append(
+                  "Internet permission is present."
+              )
+
+          if any(
+              "WEBVIEW" in p.upper()
+              for p in permissions
+          ):
+              findings.append(
+                  "Web-related permission detected."
+              )
+
+          if findings:
+
+              for finding in findings:
+                  add(f"- {finding}")
+
+          else:
+              add("- No major structural findings.")
+
+          # =====================================
+          # Suggested next analysis
+          # =====================================
+
+          section("14. Suggested Next Analysis")
+
+          add(
+              "Based on the static structure, the next useful "
+              "analysis should focus on:"
+          )
+          add("")
+
+          if urls:
+              add(
+                  "1. Inspect the detected URLs/domains and "
+                  "identify which code/resources reference them."
+              )
+
+          if native_files:
+              add(
+                  "2. Inspect native libraries and determine "
+                  "which application components load them."
+              )
+
+          if smali_dirs:
+              add(
+                  "3. Trace important application flows through "
+                  "the smali code."
+              )
+
+          if intent_actions:
+              add(
+                  "4. Inspect activities and intent filters to "
+                  "understand application entry points."
+              )
+
+          add(
+              "5. Review the manifest, resources, and application "
+              "structure before making any authorized changes."
+          )
+
+          # =====================================
+          # Write report
+          # =====================================
+
+          OUTPUT.write_text(
+              "\n".join(md),
+              encoding="utf-8"
+          )
+
+          print(
+              f"Analysis written to {OUTPUT}"
+          )
+          PY
+
+
+      # ---------------------------------------
+      # 4. Run analysis
+      # ---------------------------------------
+      - name: Run APK analysis
+        run: |
+          python3 analyze_apk.py
+
+
+      # ---------------------------------------
+      # 5. Remove analyzer script
+      # ---------------------------------------
+      - name: Cleanup
+        run: |
+          rm -f analyze_apk.py
+
+
+      # ---------------------------------------
+      # 6. Show report
+      # ---------------------------------------
+      - name: Show analysis summary
+        run: |
+          echo "======================================"
+          echo "APK ANALYSIS"
+          echo "======================================"
+
+          sed -n '1,240p' APK_ANALYSIS.md
+
+
+      # ---------------------------------------
+      # 7. Commit report
+      # ---------------------------------------
+      - name: Commit analysis report
+        run: |
+          set -e
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add APK_ANALYSIS.md
+
+          if git diff --cached --quiet; then
+            echo "No report changes."
+            exit 0
+          fi
+
+          git commit \
+            -m "Add APK static analysis report"
+
+          git push
