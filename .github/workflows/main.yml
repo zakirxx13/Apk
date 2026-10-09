@@ -1,0 +1,704 @@
+name: APK Drive Mod Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      drive_file_id:
+        description: "Google Drive APK File ID"
+        required: true
+        type: string
+
+      new_package:
+        description: "New package name"
+        required: true
+        default: "com.example.modified"
+        type: string
+
+      app_name:
+        description: "New app name"
+        required: true
+        default: "Modified App"
+        type: string
+
+      language:
+        description: "Language: none / bn"
+        required: true
+        default: "bn"
+        type: choice
+        options:
+          - none
+          - bn
+
+      smali_find:
+        description: "Optional exact text to replace in decoded files"
+        required: false
+        default: ""
+        type: string
+
+      smali_replace:
+        description: "Replacement text"
+        required: false
+        default: ""
+        type: string
+
+      resource_find:
+        description: "Optional resource text to replace"
+        required: false
+        default: ""
+        type: string
+
+      resource_replace:
+        description: "Replacement resource text"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+
+      # =========================================================
+      # 1. CHECKOUT
+      # =========================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # =========================================================
+      # 2. JAVA
+      # =========================================================
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+
+      # =========================================================
+      # 3. PYTHON
+      # =========================================================
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+
+      # =========================================================
+      # 4. DOWNLOAD APKTOOL
+      # =========================================================
+
+      - name: Download APKTool
+        run: |
+          curl -L \
+            -o apktool.jar \
+            https://github.com/iBotPeaches/Apktool/releases/download/v3.0.6/apktool_3.0.6.jar
+
+          java -jar apktool.jar --version
+
+
+      # =========================================================
+      # 5. INSTALL GOOGLE DRIVE DOWNLOADER
+      # =========================================================
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install gdown
+
+
+      # =========================================================
+      # 6. CREATE WORKING DIRECTORIES
+      # =========================================================
+
+      - name: Create directories
+        run: |
+          mkdir -p input
+          mkdir -p output
+          mkdir -p tools
+          mkdir -p translations/bn/values
+
+
+      # =========================================================
+      # 7. CREATE PACKAGE MODIFIER SCRIPT
+      # =========================================================
+
+      - name: Create package modifier
+        run: |
+          cat > tools/package_modifier.py <<'PYTHON'
+          import sys
+          import re
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          new_package = sys.argv[2]
+
+          pattern = r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$'
+
+          if not re.match(pattern, new_package):
+              print("ERROR: Invalid package name")
+              sys.exit(1)
+
+          manifest = root / "AndroidManifest.xml"
+
+          if not manifest.exists():
+              print("ERROR: AndroidManifest.xml not found")
+              sys.exit(1)
+
+          manifest_text = manifest.read_text(
+              encoding="utf-8",
+              errors="ignore"
+          )
+
+          match = re.search(
+              r'\bpackage\s*=\s*"([^"]+)"',
+              manifest_text
+          )
+
+          if not match:
+              print("WARNING: package attribute not found")
+              old_package = None
+          else:
+              old_package = match.group(1)
+
+          print("Old package:", old_package)
+          print("New package:", new_package)
+
+          if old_package:
+              for path in root.rglob("*"):
+
+                  if not path.is_file():
+                      continue
+
+                  try:
+                      text = path.read_text(
+                          encoding="utf-8"
+                      )
+                  except (UnicodeDecodeError, OSError):
+                      continue
+
+                  if old_package in text:
+                      try:
+                          path.write_text(
+                              text.replace(
+                                  old_package,
+                                  new_package
+                              ),
+                              encoding="utf-8"
+                          )
+
+                          print(
+                              "Updated:",
+                              path
+                          )
+
+                      except OSError:
+                          pass
+
+              manifest_text = re.sub(
+                  r'(\bpackage\s*=\s*")[^"]+(")',
+                  rf'\g<1>{new_package}\g<2>',
+                  manifest_text,
+                  count=1
+              )
+
+          manifest.write_text(
+              manifest_text,
+              encoding="utf-8"
+          )
+
+          print("Package modification complete.")
+          PYTHON
+
+
+      # =========================================================
+      # 8. CREATE APP NAME MODIFIER
+      # =========================================================
+
+      - name: Create app name modifier
+        run: |
+          cat > tools/app_name.py <<'PYTHON'
+          import sys
+          import re
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          app_name = sys.argv[2]
+
+          manifest = root / "AndroidManifest.xml"
+
+          if not manifest.exists():
+              sys.exit(0)
+
+          text = manifest.read_text(
+              encoding="utf-8",
+              errors="ignore"
+          )
+
+          # Direct android:label replacement when it is a literal.
+          text = re.sub(
+              r'android:label\s*=\s*"[^"]*"',
+              'android:label="' + app_name.replace('"', '') + '"',
+              text,
+              count=1
+          )
+
+          manifest.write_text(
+              text,
+              encoding="utf-8"
+          )
+
+          # Try to update common app_name string.
+          values = root / "res" / "values"
+
+          if values.exists():
+
+              for xml in values.glob("*.xml"):
+
+                  try:
+                      data = xml.read_text(
+                          encoding="utf-8"
+                      )
+                  except UnicodeDecodeError:
+                      continue
+
+                  data = re.sub(
+                      r'(<string\s+name\s*=\s*"app_name"[^>]*>).*?(</string>)',
+                      r'\g<1>' +
+                      app_name.replace("&", "&amp;") +
+                      r'\g<2>',
+                      data,
+                      flags=re.DOTALL
+                  )
+
+                  xml.write_text(
+                      data,
+                      encoding="utf-8"
+                  )
+
+          print("App name modification complete.")
+          PYTHON
+
+
+      # =========================================================
+      # 9. CREATE TEXT PATCHER
+      # =========================================================
+
+      - name: Create text patcher
+        run: |
+          cat > tools/text_patcher.py <<'PYTHON'
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          find_text = sys.argv[2]
+          replace_text = sys.argv[3]
+
+          if not find_text:
+              print("No custom patch requested.")
+              sys.exit(0)
+
+          changed = 0
+
+          for path in root.rglob("*"):
+
+              if not path.is_file():
+                  continue
+
+              try:
+                  data = path.read_text(
+                      encoding="utf-8"
+                  )
+              except (UnicodeDecodeError, OSError):
+                  continue
+
+              if find_text not in data:
+                  continue
+
+              new_data = data.replace(
+                  find_text,
+                  replace_text
+              )
+
+              if new_data != data:
+
+                  try:
+                      path.write_text(
+                          new_data,
+                          encoding="utf-8"
+                      )
+
+                      changed += 1
+                      print(
+                          "Patched:",
+                          path
+                      )
+
+                  except OSError:
+                      pass
+
+          print(
+              "Files modified:",
+              changed
+          )
+          PYTHON
+
+
+      # =========================================================
+      # 10. CREATE BANGLA TRANSLATION FILE
+      # =========================================================
+
+      - name: Create Bangla translation template
+        run: |
+          cat > translations/bn/values/strings.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+
+              <!--
+              Add ONLY existing resource names from the APK.
+
+              Example:
+
+              <string name="app_name">আমার অ্যাপ</string>
+              <string name="login">লগইন</string>
+              <string name="settings">সেটিংস</string>
+
+              -->
+
+          </resources>
+          XML
+
+
+      # =========================================================
+      # 11. CREATE LANGUAGE MODIFIER
+      # =========================================================
+
+      - name: Create language modifier
+        run: |
+          cat > tools/language_modifier.py <<'PYTHON'
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          language = sys.argv[2]
+
+          if language == "none":
+              print("Language modification disabled.")
+              sys.exit(0)
+
+          source = (
+              Path("translations")
+              / language
+              / "values"
+          )
+
+          destination = (
+              root
+              / "res"
+              / "values"
+          )
+
+          if not source.exists():
+              print(
+                  "Translation directory does not exist:",
+                  source
+              )
+              sys.exit(0)
+
+          destination.mkdir(
+              parents=True,
+              exist_ok=True
+          )
+
+          for file in source.glob("*.xml"):
+
+              target = destination / file.name
+
+              # Only copy non-empty translation files.
+              content = file.read_text(
+                  encoding="utf-8"
+              )
+
+              if "<string " not in content:
+                  print(
+                      "No actual translations in:",
+                      file
+                  )
+                  continue
+
+              target.write_text(
+                  content,
+                  encoding="utf-8"
+              )
+
+              print(
+                  "Applied translation:",
+                  file
+              )
+
+          print("Language modification complete.")
+          PYTHON
+
+
+      # =========================================================
+      # 12. DOWNLOAD APK FROM GOOGLE DRIVE
+      # =========================================================
+
+      - name: Download APK from Google Drive
+        env:
+          DRIVE_FILE_ID: ${{ inputs.drive_file_id }}
+        run: |
+          echo "Downloading APK..."
+
+          gdown \
+            --id "$DRIVE_FILE_ID" \
+            -O input/source.apk
+
+          echo "Downloaded file:"
+          ls -lh input/source.apk
+
+          file input/source.apk
+
+          test -s input/source.apk
+
+
+      # =========================================================
+      # 13. DECODE APK
+      # =========================================================
+
+      - name: Decode APK
+        run: |
+          java -jar apktool.jar \
+            d input/source.apk \
+            -o decoded \
+            --force
+
+          echo "Decoded APK:"
+          find decoded -maxdepth 2 -type d | head -50
+
+
+      # =========================================================
+      # 14. SHOW ORIGINAL PACKAGE
+      # =========================================================
+
+      - name: Detect package
+        run: |
+          echo "AndroidManifest.xml:"
+          grep -o 'package="[^"]*"' \
+            decoded/AndroidManifest.xml || true
+
+
+      # =========================================================
+      # 15. CHANGE PACKAGE
+      # =========================================================
+
+      - name: Change package
+        env:
+          NEW_PACKAGE: ${{ inputs.new_package }}
+        run: |
+          python3 \
+            tools/package_modifier.py \
+            decoded \
+            "$NEW_PACKAGE"
+
+
+      # =========================================================
+      # 16. CHANGE APP NAME
+      # =========================================================
+
+      - name: Change app name
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          python3 \
+            tools/app_name.py \
+            decoded \
+            "$APP_NAME"
+
+
+      # =========================================================
+      # 17. APPLY RESOURCE PATCH
+      # =========================================================
+
+      - name: Apply resource patch
+        env:
+          FIND_TEXT: ${{ inputs.resource_find }}
+          REPLACE_TEXT: ${{ inputs.resource_replace }}
+        run: |
+          python3 \
+            tools/text_patcher.py \
+            decoded \
+            "$FIND_TEXT" \
+            "$REPLACE_TEXT"
+
+
+      # =========================================================
+      # 18. APPLY CUSTOM SMALI/TEXT PATCH
+      # =========================================================
+
+      - name: Apply custom code patch
+        env:
+          FIND_TEXT: ${{ inputs.smali_find }}
+          REPLACE_TEXT: ${{ inputs.smali_replace }}
+        run: |
+          python3 \
+            tools/text_patcher.py \
+            decoded \
+            "$FIND_TEXT" \
+            "$REPLACE_TEXT"
+
+
+      # =========================================================
+      # 19. APPLY LANGUAGE
+      # =========================================================
+
+      - name: Apply language
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          python3 \
+            tools/language_modifier.py \
+            decoded \
+            "$LANGUAGE"
+
+
+      # =========================================================
+      # 20. SHOW MODIFIED FILES
+      # =========================================================
+
+      - name: Inspect modified APK
+        run: |
+          echo "Modified manifest:"
+          sed -n '1,120p' \
+            decoded/AndroidManifest.xml
+
+          echo ""
+          echo "Smali directories:"
+          find decoded -type d \
+            -name "smali*" \
+            | head -30
+
+          echo ""
+          echo "Resource directories:"
+          find decoded/res \
+            -maxdepth 1 \
+            -type d \
+            | head -50
+
+
+      # =========================================================
+      # 21. REBUILD APK
+      # =========================================================
+
+      - name: Rebuild APK
+        run: |
+          java -jar apktool.jar \
+            b decoded \
+            -o output/unsigned.apk
+
+          ls -lh output/unsigned.apk
+
+
+      # =========================================================
+      # 22. SETUP ANDROID SDK
+      # =========================================================
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+
+      # =========================================================
+      # 23. INSTALL BUILD TOOLS
+      # =========================================================
+
+      - name: Install Android Build Tools
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "build-tools;35.0.0"
+
+
+      # =========================================================
+      # 24. CREATE SIGNING KEY
+      # =========================================================
+
+      - name: Create signing key
+        run: |
+          keytool \
+            -genkeypair \
+            -v \
+            -keystore release.keystore \
+            -storepass android \
+            -keypass android \
+            -alias release \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=APK Mod Build"
+
+
+      # =========================================================
+      # 25. SIGN APK
+      # =========================================================
+
+      - name: Sign APK
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner \
+            sign \
+            --ks release.keystore \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out output/modified.apk \
+            output/unsigned.apk
+
+
+      # =========================================================
+      # 26. VERIFY APK
+      # =========================================================
+
+      - name: Verify APK
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner \
+            verify \
+            --verbose \
+            output/modified.apk
+
+          echo "Final APK:"
+          ls -lh output/modified.apk
+
+
+      # =========================================================
+      # 27. UPLOAD ARTIFACT
+      # =========================================================
+
+      - name: Upload modified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: modified-apk
+          path: output/modified.apk
+          retention-days: 7
+
+
+      # =========================================================
+      # 28. UPLOAD DECODED SOURCE
+      # =========================================================
+
+      - name: Archive decoded project
+        run: |
+          zip -r output/decoded-project.zip decoded \
+            -x "decoded/build/*"
+
+
+      - name: Upload decoded project
+        uses: actions/upload-artifact@v4
+        with:
+          name: decoded-apk-project
+          path: output/decoded-project.zip
+          retention-days: 7
