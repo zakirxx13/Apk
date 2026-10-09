@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:background="@drawable/bg_app_glass" android:layout_width="match_parent" android:layout_height="match_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <View android:id="@id/status_bar_bg" android:background="@color/status_bar_glass" android:layout_width="match_parent" android:layout_height="0.0dp" />
+    <com.google.android.material.appbar.MaterialToolbar android:id="@id/toolbar" android:background="@drawable/bg_toolbar_glass" android:layout_width="match_parent" android:layout_height="?actionBarSize" app:title="@string/live_score_title" app:titleTextColor="@color/white" />
+    <androidx.recyclerview.widget.RecyclerView android:id="@id/date_strip" android:paddingLeft="6.0dp" android:paddingRight="6.0dp" android:clipToPadding="false" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="6.0dp" />
+    <HorizontalScrollView android:scrollbars="none" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <com.google.android.material.chip.ChipGroup android:id="@id/filter_chips" android:paddingLeft="12.0dp" android:paddingTop="8.0dp" android:paddingRight="12.0dp" android:paddingBottom="8.0dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingHorizontal="12.0dp" android:paddingVertical="8.0dp" app:selectionRequired="true" app:singleLine="true" app:singleSelection="true">
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_all" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" android:text="@string/live_filter_all" style="@style/Widget.MaterialComponents.Chip.Choice" />
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_live" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/live_filter_live" style="@style/Widget.MaterialComponents.Chip.Choice" />
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_upcoming" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/live_filter_upcoming" style="@style/Widget.MaterialComponents.Chip.Choice" />
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_finished" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/live_filter_finished" style="@style/Widget.MaterialComponents.Chip.Choice" />
+        </com.google.android.material.chip.ChipGroup>
+    </HorizontalScrollView>
+    <HorizontalScrollView android:scrollbars="none" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <com.google.android.material.chip.ChipGroup android:id="@id/type_chips" android:paddingLeft="12.0dp" android:paddingRight="12.0dp" android:paddingBottom="6.0dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingHorizontal="12.0dp" app:selectionRequired="true" app:singleLine="true" app:singleSelection="true">
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_type_all" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" android:text="@string/live_type_all" style="@style/Widget.MaterialComponents.Chip.Choice" />
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_type_t20" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/live_type_t20" style="@style/Widget.MaterialComponents.Chip.Choice" />
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_type_odi" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/live_type_odi" style="@style/Widget.MaterialComponents.Chip.Choice" />
+            <com.google.android.material.chip.Chip android:textColor="@color/white" android:id="@id/chip_type_test" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/live_type_test" style="@style/Widget.MaterialComponents.Chip.Choice" />
+        </com.google.android.material.chip.ChipGroup>
+    </HorizontalScrollView>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0.0dp" android:layout_weight="1.0">
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout android:id="@id/refresh" android:layout_width="match_parent" android:layout_height="match_parent">
+            <androidx.recyclerview.widget.RecyclerView android:id="@id/recycler" android:paddingLeft="8.0dp" android:paddingTop="4.0dp" android:paddingRight="8.0dp" android:paddingBottom="16.0dp" android:clipToPadding="false" android:layout_width="match_parent" android:layout_height="match_parent" android:paddingHorizontal="8.0dp" />
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+        <com.airbnb.lottie.LottieAnimationView android:layout_gravity="center" android:id="@id/loading" android:visibility="gone" android:layout_width="120.0dp" android:layout_height="120.0dp" app:lottie_autoPlay="true" app:lottie_loop="true" app:lottie_rawRes="@raw/bat_ball" />
+        <LinearLayout android:gravity="center" android:layout_gravity="center" android:orientation="vertical" android:id="@id/empty_container" android:visibility="gone" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginLeft="24.0dp" android:layout_marginRight="24.0dp" android:layout_marginHorizontal="24.0dp">
+            <TextView android:textSize="15.0sp" android:textColor="@color/white" android:gravity="center" android:id="@id/empty_text" android:layout_width="wrap_content" android:layout_height="wrap_content" />
+            <com.google.android.material.button.MaterialButton android:textColor="@color/white" android:id="@id/empty_retry" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14.0dp" android:text="@string/live_retry" app:strokeColor="@color/primary_color" style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

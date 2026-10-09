@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:background="#11ffffff" android:paddingLeft="6.0dp" android:paddingTop="6.0dp" android:paddingRight="6.0dp" android:paddingBottom="6.0dp" android:layout_width="match_parent" android:layout_height="wrap_content"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <TextView android:textSize="11.0sp" android:textStyle="bold" android:textColor="@color/white" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="@string/match_header_batsman" android:layout_weight="3.0" android:alpha="0.7" />
+    <TextView android:textSize="11.0sp" android:textStyle="bold" android:textColor="@color/white" android:gravity="end" android:layout_width="40.0dp" android:layout_height="wrap_content" android:text="@string/match_header_runs" android:alpha="0.7" />
+    <TextView android:textSize="11.0sp" android:textStyle="bold" android:textColor="@color/white" android:gravity="end" android:layout_width="40.0dp" android:layout_height="wrap_content" android:text="@string/match_header_balls" android:alpha="0.7" />
+    <TextView android:textSize="11.0sp" android:textStyle="bold" android:textColor="@color/white" android:gravity="end" android:layout_width="32.0dp" android:layout_height="wrap_content" android:text="@string/match_header_fours" android:alpha="0.7" />
+    <TextView android:textSize="11.0sp" android:textStyle="bold" android:textColor="@color/white" android:gravity="end" android:layout_width="32.0dp" android:layout_height="wrap_content" android:text="@string/match_header_sixes" android:alpha="0.7" />
+    <TextView android:textSize="11.0sp" android:textStyle="bold" android:textColor="@color/white" android:gravity="end" android:layout_width="48.0dp" android:layout_height="wrap_content" android:text="@string/match_header_strike_rate" android:alpha="0.7" />
+</LinearLayout>

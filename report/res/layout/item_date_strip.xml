@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:gravity="center" android:orientation="vertical" android:background="@drawable/bg_date_strip" android:paddingTop="8.0dp" android:paddingBottom="8.0dp" android:focusable="true" android:clickable="true" android:layout_width="56.0dp" android:layout_height="wrap_content" android:layout_marginLeft="3.0dp" android:layout_marginTop="6.0dp" android:layout_marginRight="3.0dp" android:layout_marginBottom="6.0dp" android:foreground="@drawable/bg_tv_card_focus"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <TextView android:textSize="11.0sp" android:textColor="@color/white" android:id="@id/date_dow" android:layout_width="wrap_content" android:layout_height="wrap_content" android:alpha="0.7" />
+    <TextView android:textSize="18.0sp" android:textStyle="bold" android:textColor="@color/white" android:id="@id/date_day" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="2.0dp" />
+    <TextView android:textSize="10.0sp" android:textColor="@color/white" android:id="@id/date_month" android:layout_width="wrap_content" android:layout_height="wrap_content" android:alpha="0.7" />
+</LinearLayout>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:paddingLeft="6.0dp" android:paddingTop="6.0dp" android:paddingRight="6.0dp" android:paddingBottom="6.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="6.0dp" android:paddingVertical="6.0dp"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <TextView android:textSize="13.0sp" android:textStyle="bold" android:textColor="@color/white" android:ellipsize="end" android:id="@id/batsman_name" android:layout_width="0.0dp" android:layout_height="wrap_content" android:maxLines="1" android:layout_weight="3.0" />
+        <TextView android:textSize="13.0sp" android:textStyle="bold" android:textColor="@color/white" android:gravity="end" android:id="@id/batsman_runs" android:layout_width="40.0dp" android:layout_height="wrap_content" />
+        <TextView android:textSize="13.0sp" android:textColor="@color/white" android:gravity="end" android:id="@id/batsman_balls" android:layout_width="40.0dp" android:layout_height="wrap_content" />
+        <TextView android:textSize="13.0sp" android:textColor="@color/white" android:gravity="end" android:id="@id/batsman_fours" android:layout_width="32.0dp" android:layout_height="wrap_content" />
+        <TextView android:textSize="13.0sp" android:textColor="@color/white" android:gravity="end" android:id="@id/batsman_sixes" android:layout_width="32.0dp" android:layout_height="wrap_content" />
+        <TextView android:textSize="13.0sp" android:textColor="@color/white" android:gravity="end" android:id="@id/batsman_sr" android:layout_width="48.0dp" android:layout_height="wrap_content" />
+    </LinearLayout>
+    <TextView android:textSize="11.0sp" android:textColor="@color/white" android:id="@id/batsman_dismissal" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="2.0dp" android:alpha="0.7" />
+</LinearLayout>

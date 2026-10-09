@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:gravity="center_horizontal" android:orientation="vertical" android:focusable="true" android:clickable="true" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginLeft="4.0dp" android:layout_marginRight="4.0dp"
+  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
+    <com.google.android.material.card.MaterialCardView android:id="@id/materialCardView" android:focusable="true" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_margin="3.0dp" android:backgroundTint="@color/card_back_solid" app:cardCornerRadius="20.0dp" app:cardElevation="2.0dp" app:strokeColor="@color/event_cat_chip_stroke" app:strokeWidth="1.0dp">
+        <FrameLayout android:gravity="center" android:orientation="vertical" android:padding="@dimen/_4sdp" android:layout_width="@dimen/_36sdp" android:layout_height="@dimen/_36sdp">
+            <ImageView android:layout_gravity="center" android:id="@id/imgSportIcon" android:padding="@dimen/_3sdp" android:layout_width="match_parent" android:layout_height="match_parent" android:scaleType="centerInside" />
+            <TextView android:textSize="8.0sp" android:textStyle="bold" android:textColor="@color/white" android:ellipsize="end" android:gravity="center" android:layout_gravity="end" android:id="@id/txtEventCount" android:background="@drawable/badge_circle_background" android:layout_width="16.0dp" android:layout_height="16.0dp" android:maxLines="1" android:translationX="0.0dp" android:translationY="1.0dp" />
+        </FrameLayout>
+    </com.google.android.material.card.MaterialCardView>
+    <TextView android:textSize="12.0sp" android:textColor="?colorOnBackground" android:ellipsize="marquee" android:gravity="center" android:id="@id/txtSportName" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="1.5dp" android:scrollHorizontally="true" android:singleLine="true" android:marqueeRepeatLimit="marquee_forever" />
+</LinearLayout>

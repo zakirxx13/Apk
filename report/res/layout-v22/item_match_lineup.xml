@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:paddingLeft="8.0dp" android:paddingTop="6.0dp" android:paddingRight="8.0dp" android:paddingBottom="6.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="8.0dp" android:paddingVertical="6.0dp"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <TextView android:textSize="12.0sp" android:textColor="@color/white" android:gravity="end" android:id="@id/lineup_position" android:layout_width="22.0dp" android:layout_height="wrap_content" android:alpha="0.7" />
+    <TextView android:textSize="14.0sp" android:textColor="@color/white" android:ellipsize="end" android:id="@id/lineup_name" android:layout_width="0.0dp" android:layout_height="wrap_content" android:maxLines="1" android:layout_weight="1.0" android:layout_marginStart="8.0dp" />
+    <TextView android:textSize="10.0sp" android:textStyle="bold" android:textColor="@color/primary_color" android:gravity="center" android:id="@id/lineup_role" android:background="@drawable/bg_lineup_role" android:paddingLeft="6.0dp" android:paddingTop="2.0dp" android:paddingRight="6.0dp" android:paddingBottom="2.0dp" android:visibility="gone" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="28.0dp" android:paddingHorizontal="6.0dp" android:paddingVertical="2.0dp" />
+</LinearLayout>
