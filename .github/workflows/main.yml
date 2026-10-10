@@ -1,51 +1,157 @@
-name: IPTV Exporter
+name: IPTV Playlist Exporter
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 */6 * * *"
 
 jobs:
   export:
     runs-on: ubuntu-latest
+
+    env:
+      IPTV_HOST: "http://gott-smart.net:80"
+      IPTV_USERNAME: "MAG2UHMP6K"
+      IPTV_PASSWORD: "2poLclRsIj"
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
+      - name: Fetch IPTV data and generate playlists
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          set -e
 
-      - name: Run exporter script
-        env:
-          IPTV_HOST: ${{ secrets.IPTV_HOST }}
-          IPTV_USERNAME: ${{ secrets.IPTV_USERNAME }}
-          IPTV_PASSWORD: ${{ secrets.IPTV_PASSWORD }}
-        run: |
-          python exporter.py
+          mkdir -p output
 
-      - name: Verify generated files
-        run: |
-          echo "Verifying files exist..."
-          test -f output/playlist.m3u
-          test -f output/playlist-json.m3u
-          test -f output/catalog.json
+          BASE="${IPTV_HOST%/}/player_api.php?username=${IPTV_USERNAME}&password=${IPTV_PASSWORD}"
 
-          echo "Verifying playlist.m3u starts with #EXTM3U..."
-          head -n 1 output/playlist.m3u | grep -q "^#EXTM3U"
+          echo "Fetching account information..."
+          AUTH=$(curl -fsSL --max-time 60 "$BASE")
 
-          echo "Verifying playlist-json.m3u contains valid JSON..."
-          python3 -c "import json; json.load(open('output/playlist-json.m3u'))"
-          echo "All verifications passed successfully!"
+          if ! echo "$AUTH" | jq -e '.user_info.auth == 1' >/dev/null 2>&1; then
+            echo "Authentication failed."
+            exit 1
+          fi
 
-      - name: Upload Artifacts
+          echo "Authentication successful."
+
+          api_get() {
+            ACTION="$1"
+            curl -fsSL \
+              --max-time 120 \
+              "${BASE}&action=${ACTION}"
+          }
+
+          echo "Fetching live streams..."
+          LIVE=$(api_get "get_live_streams")
+
+          echo "Fetching VOD streams..."
+          VOD=$(api_get "get_vod_streams")
+
+          echo "Fetching series..."
+          SERIES=$(api_get "get_series")
+
+          echo "Validating API responses..."
+
+          echo "$LIVE" | jq empty
+          echo "$VOD" | jq empty
+          echo "$SERIES" | jq empty
+
+          echo "Generating standard M3U..."
+
+          {
+            echo "#EXTM3U"
+
+            echo "$LIVE" |
+              jq -r --arg host "$IPTV_HOST" \
+                --arg user "$IPTV_USERNAME" \
+                --arg pass "$IPTV_PASSWORD" '
+                .[] |
+                .stream_id as $id |
+                (.name // "Unknown") as $name |
+                (.stream_icon // "") as $logo |
+                (.category_name // "") as $group |
+                "#EXTINF:-1" +
+                (if $logo != "" then " tvg-logo=\"" + $logo + "\"" else "" end) +
+                (if $group != "" then " group-title=\"" + $group + "\"" else "" end) +
+                "," + $name + "\n" +
+                ($host + "/live/" +
+                 $user + "/" +
+                 $pass + "/" +
+                 ($id|tostring) + ".ts")
+              '
+
+            echo "$VOD" |
+              jq -r --arg host "$IPTV_HOST" \
+                --arg user "$IPTV_USERNAME" \
+                --arg pass "$IPTV_PASSWORD" '
+                .[] |
+                .stream_id as $id |
+                (.name // "Unknown") as $name |
+                (.stream_icon // .cover // "") as $logo |
+                (.category_name // "") as $group |
+                "#EXTINF:-1" +
+                (if $logo != "" then " tvg-logo=\"" + $logo + "\"" else "" end) +
+                (if $group != "" then " group-title=\"" + $group + "\"" else "" end) +
+                "," + $name + "\n" +
+                ($host + "/movie/" +
+                 $user + "/" +
+                 $pass + "/" +
+                 ($id|tostring) + ".mp4")
+              '
+
+          } > output/playlist.m3u
+
+          echo "Generating JSON-content M3U..."
+
+          jq -n \
+            --arg host "$IPTV_HOST" \
+            --arg generated "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --argjson live "$LIVE" \
+            --argjson vod "$VOD" \
+            --argjson series "$SERIES" '
+            {
+              generated_at: $generated,
+              server: $host,
+              live: $live,
+              vod: $vod,
+              series: $series
+            }
+          ' > output/playlist-json.m3u
+
+          echo "Generating catalog.json..."
+
+          jq -n \
+            --arg generated "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --argjson live "$LIVE" \
+            --argjson vod "$VOD" \
+            --argjson series "$SERIES" '
+            {
+              generated_at: $generated,
+              live: $live,
+              vod: $vod,
+              series: $series
+            }
+          ' > output/catalog.json
+
+          echo "Validating generated files..."
+
+          test -s output/playlist.m3u
+          test -s output/playlist-json.m3u
+          test -s output/catalog.json
+
+          head -n 1 output/playlist.m3u | grep -Fx "#EXTM3U"
+
+          jq empty output/playlist-json.m3u
+          jq empty output/catalog.json
+
+          echo ""
+          echo "Export completed."
+          echo "Files:"
+          ls -lh output/
+
+      - name: Upload playlists
         uses: actions/upload-artifact@v4
         with:
           name: iptv-playlists
           path: output/
+          if-no-files-found: error
