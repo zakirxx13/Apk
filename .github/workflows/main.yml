@@ -1,9 +1,7 @@
-name: IPTV Connection Diagnostics
+name: IPTV Server Diagnostics
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"
 
 permissions:
   contents: read
@@ -14,67 +12,71 @@ jobs:
     timeout-minutes: 5
 
     env:
-      IPTV_HOST: "http://gott-smart.net:80"
+      IPTV_HOST: "http://gott-smart.net"
+      IPTV_PORT: "80"
+      IPTV_BASE_URL: "http://gott-smart.net:80"
 
     steps:
-      - name: Check tools
+      - name: Check configuration
         shell: bash
         run: |
           set -euo pipefail
-          curl --version
-          python3 --version
 
-      - name: Diagnose DNS
+          echo "Host: $IPTV_HOST"
+          echo "Port: $IPTV_PORT"
+          echo "Base URL: $IPTV_BASE_URL"
+
+      - name: Check DNS
         shell: bash
         run: |
           set -uo pipefail
 
-          HOST="${IPTV_HOST#http://}"
-          HOST="${HOST#https://}"
-          HOST="${HOST%%/*}"
-          HOST="${HOST%%:*}"
-
-          echo "Checking DNS for configured hostname..."
-
-          if getent ahosts "$HOST"; then
-            echo "DNS lookup completed."
+          if getent ahosts gott-smart.net; then
+            echo "DNS resolution successful."
           else
-            echo "::warning::DNS lookup failed."
+            echo "::error::DNS resolution failed."
+            exit 1
           fi
 
-      - name: Test documented HTTP and HTTPS endpoints
+      - name: Test HTTP connectivity
         shell: bash
         run: |
           set -uo pipefail
 
-          for URL in \
-            "http://gott-smart.net:80/" \
-            "https://gott-smart.net/"; do
+          echo "Testing HTTP endpoint..."
 
-            echo ""
-            echo "Testing endpoint: $URL"
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt of 3"
 
             if curl \
               --silent \
               --show-error \
               --connect-timeout 10 \
               --max-time 20 \
-              --output /dev/null \
+              --output /tmp/response.txt \
               --write-out \
               'HTTP status: %{http_code}\nRemote IP: %{remote_ip}\n' \
-              "$URL"; then
+              "$IPTV_BASE_URL/"; then
 
-              echo "Connection request completed."
+              echo "HTTP request completed."
+              exit 0
             else
-              RESULT=$?
-              echo "Request failed with curl exit code: $RESULT"
+              result=$?
+              echo "Request failed with curl exit code: $result"
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              sleep 3
             fi
           done
 
-      - name: Summarize results
+          echo "::error::HTTP connection failed after 3 attempts."
+          echo "Check the server service, port and network access."
+          exit 1
+
+      - name: Report result
         if: always()
         shell: bash
         run: |
-          echo "Diagnostics completed."
-          echo "Review the preceding output for DNS, protocol, and connection errors."
-          echo "A successful root-page request does not guarantee API availability."
+          echo "Diagnostic workflow finished."
+          echo "Review previous steps for the exact connection error."
