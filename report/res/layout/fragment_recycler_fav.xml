@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout android:layout_width="match_parent" android:layout_height="match_parent"
-  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
-    <LinearLayout android:gravity="center_horizontal" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="match_parent">
-        <com.google.android.material.tabs.TabLayout android:id="@id/fav_chips" android:background="@drawable/bg_fav_tab_bar" android:padding="4.0dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="8.0dp" app:tabBackground="@drawable/bg_fav_tab" app:tabIndicatorColor="@color/primary_color" app:tabIndicatorFullWidth="false" app:tabIndicatorHeight="3.0dp" app:tabRippleColor="@color/fav_tab_ripple" app:tabSelectedTextColor="@color/primary_color" app:tabTextColor="#ccffffff" />
-        <androidx.recyclerview.widget.RecyclerView android:orientation="vertical" android:id="@id/recycler_view_fav" android:paddingTop="@dimen/_5sdp" android:paddingBottom="@dimen/_5sdp" android:focusable="true" android:layout_width="match_parent" android:layout_height="0.0dp" android:layout_weight="1.0" app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
-    </LinearLayout>
-    <TextView android:textAppearance="@style/TextAppearance.Material3.TitleMedium" android:layout_gravity="center" android:id="@id/empty_error" android:visibility="gone" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_margin="@dimen/_25sdp" />
-</FrameLayout>

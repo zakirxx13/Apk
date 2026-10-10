@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout android:gravity="center_horizontal" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"
-  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
-    <com.google.android.material.card.MaterialCardView android:focusable="true" android:focusableInTouchMode="false" android:clickable="true" android:layout_width="480.0dp" android:layout_height="wrap_content" android:layout_margin="10.0dp" android:layout_marginTop="8.0dp" android:foreground="@drawable/bg_tv_card_focus" app:cardBackgroundColor="@android:color/transparent" app:cardCornerRadius="14.0dp" app:cardElevation="3.0dp" app:strokeColor="@color/tv_card_stroke" app:strokeWidth="2.0dp">
-        <androidx.constraintlayout.widget.ConstraintLayout android:layout_gravity="center" android:id="@id/constraint_ly" android:layout_width="match_parent" android:layout_height="wrap_content">
-            <ImageView android:id="@id/ad_img" android:layout_width="0.0dp" android:layout_height="0.0dp" android:scaleType="fitXY" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintDimensionRatio="H,32:5" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toTopOf="parent" />
-        </androidx.constraintlayout.widget.ConstraintLayout>
-    </com.google.android.material.card.MaterialCardView>
-</LinearLayout>
