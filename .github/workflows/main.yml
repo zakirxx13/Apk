@@ -1,0 +1,330 @@
+name: APK Static API Scan
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            wget \
+            unzip \
+            grep \
+            binutils \
+            file \
+            python3
+
+      - name: Download APK
+        run: |
+          mkdir -p work/apk
+
+          wget \
+            --https-only \
+            --timeout=60 \
+            --tries=3 \
+            --show-progress \
+            -O work/apk/app.apk \
+            "https://sport-zfy.com/wp-content/apk/Sportzfy_v32.0.apk"
+
+          echo "APK information:"
+          file work/apk/app.apk
+          ls -lh work/apk/app.apk
+
+      - name: Validate APK
+        run: |
+          unzip -t work/apk/app.apk > /dev/null
+          echo "APK archive is valid."
+
+      - name: Download JADX
+        run: |
+          mkdir -p work/tools
+
+          JADX_VERSION="1.5.3"
+
+          wget -q \
+            "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip" \
+            -O work/tools/jadx.zip
+
+          mkdir -p work/tools/jadx
+
+          unzip -q \
+            work/tools/jadx.zip \
+            -d work/tools/jadx
+
+          chmod +x work/tools/jadx/bin/jadx
+
+          ./work/tools/jadx/bin/jadx --version
+
+      - name: Extract APK files
+        run: |
+          mkdir -p work/decoded
+
+          unzip -q \
+            work/apk/app.apk \
+            -d work/decoded
+
+          echo "APK extracted successfully."
+
+      - name: Decompile APK
+        run: |
+          mkdir -p work/source
+
+          ./work/tools/jadx/bin/jadx \
+            --output-dir work/source \
+            work/apk/app.apk \
+            || true
+
+      - name: Create report directory
+        run: |
+          mkdir -p report
+
+      - name: Extract HTTP and HTTPS URLs
+        run: |
+          {
+            echo "========================================"
+            echo "HTTP / HTTPS URLS"
+            echo "========================================"
+            echo
+
+            grep -RhoE \
+              'https?://[^"'\''<>[:space:]]+' \
+              work/source work/decoded 2>/dev/null \
+              | sed 's/[),;}]$//' \
+              | sort -u \
+              || true
+
+          } > report/http-https-urls.txt
+
+      - name: Extract WebSocket URLs
+        run: |
+          {
+            echo "========================================"
+            echo "WEBSOCKET URLS"
+            echo "========================================"
+            echo
+
+            grep -RhoE \
+              'wss?://[^"'\''<>[:space:]]+' \
+              work/source work/decoded 2>/dev/null \
+              | sed 's/[),;}]$//' \
+              | sort -u \
+              || true
+
+          } > report/websocket-urls.txt
+
+      - name: Extract API-like paths
+        run: |
+          {
+            echo "========================================"
+            echo "API-LIKE PATHS"
+            echo "========================================"
+            echo
+
+            grep -RhoE \
+              '["'\''][^"'\'']*/(api|api/v[0-9]+|v[0-9]+|graphql|rest)/[^"'\'']*["'\'']' \
+              work/source work/decoded 2>/dev/null \
+              | sort -u \
+              || true
+
+          } > report/api-paths.txt
+
+      - name: Extract hostnames
+        run: |
+          {
+            echo "========================================"
+            echo "HOSTNAMES"
+            echo "========================================"
+            echo
+
+            grep -RhoE \
+              'https?://[^/"'\''<>[:space:]]+' \
+              work/source work/decoded 2>/dev/null \
+              | sed -E 's#https?://##' \
+              | sed 's/:.*//' \
+              | sort -u \
+              || true
+
+          } > report/hostnames.txt
+
+      - name: Detect networking libraries
+        run: |
+          {
+            echo "========================================"
+            echo "NETWORKING REFERENCES"
+            echo "========================================"
+            echo
+
+            grep -RniE \
+              'Retrofit|OkHttp|Volley|HttpURLConnection|URLConnection|WebView|GraphQL|Firebase|Supabase|Apache.*Http|Cronet' \
+              work/source 2>/dev/null \
+              | head -n 1000 \
+              || true
+
+          } > report/networking-references.txt
+
+      - name: Scan native libraries
+        run: |
+          {
+            echo "========================================"
+            echo "NATIVE LIBRARY URL SCAN"
+            echo "========================================"
+            echo
+
+            find work/decoded \
+              -type f \
+              -name "*.so" \
+              -print0 |
+            while IFS= read -r -d '' lib; do
+
+              echo
+              echo "----------------------------------------"
+              echo "FILE: $lib"
+              echo "----------------------------------------"
+
+              strings "$lib" 2>/dev/null |
+                grep -E \
+                  'https?://|wss?://|/api/|/v[0-9]+/' |
+                sort -u \
+                || true
+
+            done
+
+          } > report/native-library-scan.txt
+
+      - name: Scan DEX files
+        run: |
+          {
+            echo "========================================"
+            echo "DEX URL SCAN"
+            echo "========================================"
+            echo
+
+            find work/decoded \
+              -type f \
+              -name "*.dex" \
+              -print0 |
+            while IFS= read -r -d '' dex; do
+
+              echo
+              echo "----------------------------------------"
+              echo "FILE: $dex"
+              echo "----------------------------------------"
+
+              strings "$dex" 2>/dev/null |
+                grep -E \
+                  'https?://|wss?://|/api/|/v[0-9]+/' |
+                sort -u \
+                || true
+
+            done
+
+          } > report/dex-scan.txt
+
+      - name: APK information
+        run: |
+          {
+            echo "========================================"
+            echo "APK INFORMATION"
+            echo "========================================"
+            echo
+
+            echo "File:"
+            file work/apk/app.apk
+
+            echo
+            echo "Size:"
+            du -h work/apk/app.apk
+
+            echo
+            echo "Extracted files:"
+            find work/decoded \
+              -maxdepth 2 \
+              -type f \
+              | sort \
+              | head -n 500
+
+          } > report/apk-information.txt
+
+      - name: Search Android manifest
+        run: |
+          {
+            echo "========================================"
+            echo "MANIFEST REFERENCES"
+            echo "========================================"
+            echo
+
+            if [ -f "work/source/resources/AndroidManifest.xml" ]; then
+              grep -niE \
+                'uses-permission|uses-feature|activity|service|receiver|provider|http|https' \
+                work/source/resources/AndroidManifest.xml \
+                || true
+            else
+              echo "AndroidManifest.xml not available in JADX output."
+            fi
+
+          } > report/manifest.txt
+
+      - name: Create final report
+        run: |
+          {
+            echo "########################################"
+            echo "# APK STATIC ANALYSIS REPORT"
+            echo "########################################"
+            echo
+
+            cat report/apk-information.txt
+
+            echo
+            cat report/http-https-urls.txt
+
+            echo
+            cat report/websocket-urls.txt
+
+            echo
+            cat report/api-paths.txt
+
+            echo
+            cat report/hostnames.txt
+
+            echo
+            cat report/networking-references.txt
+
+            echo
+            cat report/native-library-scan.txt
+
+            echo
+            cat report/dex-scan.txt
+
+            echo
+            cat report/manifest.txt
+
+          } > report/FINAL-REPORT.txt
+
+      - name: Print report
+        run: |
+          echo
+          echo "========================================"
+          echo "SCAN RESULT"
+          echo "========================================"
+          echo
+
+          cat report/FINAL-REPORT.txt
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-static-analysis-report
+          path: report/
+          retention-days: 7
