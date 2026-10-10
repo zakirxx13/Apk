@@ -1,671 +1,124 @@
-name: API Capture & Deep Analysis
+name: APK API Static Scan
 
 on:
   workflow_dispatch:
     inputs:
-      apk_url:
-        description: "Direct APK download URL"
+      apk_path:
+        description: "APK path in repository"
         required: true
-        type: string
-
-permissions:
-  contents: write
+        default: "app.apk"
 
 jobs:
-  api-analysis:
+  scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
 
     steps:
-
-      # =========================================================
-      # 1. CHECKOUT
-      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # =========================================================
-      # 2. BASIC TOOLS
-      # =========================================================
-      - name: Install analysis tools
+      - name: Check APK
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            unzip \
-            zip \
-            wget \
-            curl \
-            jq \
-            grep \
-            sed \
-            gawk \
-            file \
-            python3 \
-            python3-pip \
-            tshark
-
-      # =========================================================
-      # 3. DOWNLOAD APK
-      # =========================================================
-      - name: Download APK
-        env:
-          APK_URL: ${{ inputs.apk_url }}
-        run: |
-          mkdir -p work
-          echo "Downloading APK..."
-
-          curl -L \
-            --fail \
-            --retry 3 \
-            --connect-timeout 30 \
-            --max-time 300 \
-            "$APK_URL" \
-            -o work/app.apk
-
-          echo "APK downloaded:"
-          ls -lh work/app.apk
-
-          file work/app.apk
-
-      # =========================================================
-      # 4. DOWNLOAD APKTOOL
-      # =========================================================
-      - name: Download latest APKTool
-        run: |
-          mkdir -p tools
-
-          APKTOOL_URL=$(curl -fsSL \
-            https://api.github.com/repos/iBotPeaches/Apktool/releases/latest \
-            | jq -r '.assets[] | select(.name | test("^apktool_.*\\.jar$")) | .browser_download_url' \
-            | head -n 1)
-
-          if [ -z "$APKTOOL_URL" ] || [ "$APKTOOL_URL" = "null" ]; then
-            echo "Could not find APKTool release"
+          test -f "${{ github.event.inputs.apk_path }}" || {
+            echo "APK not found: ${{ github.event.inputs.apk_path }}"
             exit 1
-          fi
-
-          curl -L \
-            --fail \
-            "$APKTOOL_URL" \
-            -o tools/apktool.jar
-
-          ls -lh tools/apktool.jar
-
-      # =========================================================
-      # 5. DECOMPILE
-      # =========================================================
-      - name: Decompile APK
-        run: |
-          rm -rf report
-
-          java -jar tools/apktool.jar d \
-            work/app.apk \
-            -o report \
-            -f
-
-          echo "Decompiled successfully"
-
-          find report -maxdepth 2 -type d | head -50
-
-      # =========================================================
-      # 6. EXTRACT PACKAGE NAME
-      # =========================================================
-      - name: Detect package name
-        run: |
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          manifest = Path("report/AndroidManifest.xml")
-
-          if not manifest.exists():
-              print("AndroidManifest.xml not found")
-              exit(1)
-
-          text = manifest.read_text(errors="ignore")
-
-          m = re.search(r'<manifest[^>]*package="([^"]+)"', text)
-
-          if not m:
-              print("Package name not detected")
-              exit(1)
-
-          package = m.group(1)
-
-          print("PACKAGE=" + package)
-
-          Path("work/package.txt").write_text(package)
-          PY
-
-      # =========================================================
-      # 7. STATIC API ANALYSIS
-      # =========================================================
-      - name: Static API analysis
-        run: |
-          cat > work/static_api.py <<'PY'
-          import re
-          import os
-          from pathlib import Path
-          from collections import Counter
-
-          ROOT = Path("report")
-
-          extensions = {
-              ".smali",
-              ".xml",
-              ".json",
-              ".txt",
-              ".html",
-              ".js",
-              ".kt",
-              ".java",
-              ".properties",
-              ".cfg",
-              ".conf"
           }
 
-          url_pattern = re.compile(
-              r'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]+',
-              re.I
-          )
-
-          domain_pattern = re.compile(
-              r'\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?::\d+)?\b'
-          )
-
-          api_pattern = re.compile(
-              r'(?i)'
-              r'(?:'
-              r'/api/[A-Za-z0-9_./?=&:%-]+|'
-              r'/v[0-9]+/[A-Za-z0-9_./?=&:%-]+|'
-              r'/graphql[A-Za-z0-9_./?=&:%-]*|'
-              r'/rest/[A-Za-z0-9_./?=&:%-]+|'
-              r'/auth/[A-Za-z0-9_./?=&:%-]+|'
-              r'/search[A-Za-z0-9_./?=&:%-]*|'
-              r'/login[A-Za-z0-9_./?=&:%-]*|'
-              r'/config[A-Za-z0-9_./?=&:%-]*'
-              r')'
-          )
-
-          special_pattern = re.compile(
-              r'(?i)'
-              r'(?:'
-              r'https?://[^"\'\s<>]+|'
-              r'[^"\'\s<>]+\.m3u8(?:\?[^"\'\s<>]*)?|'
-              r'[^"\'\s<>]+\.mpd(?:\?[^"\'\s<>]*)?|'
-              r'[^"\'\s<>]+/api/[^"\'\s<>]*|'
-              r'[^"\'\s<>]+/v[0-9]+/[^"\'\s<>]*'
-              r')'
-          )
-
-          urls = Counter()
-          domains = Counter()
-          endpoints = Counter()
-          media_urls = Counter()
-
-          firebase = []
-          retrofit = []
-          okhttp = []
-          webview = []
-
-          scanned = 0
-
-          for path in ROOT.rglob("*"):
-
-              if not path.is_file():
-                  continue
-
-              if path.suffix.lower() not in extensions:
-                  continue
-
-              try:
-                  text = path.read_text(
-                      encoding="utf-8",
-                      errors="ignore"
-                  )
-              except Exception:
-                  continue
-
-              scanned += 1
-
-              for x in url_pattern.findall(text):
-                  urls[x] += 1
-
-                  host = re.sub(
-                      r'^https?://',
-                      '',
-                      x,
-                      flags=re.I
-                  ).split('/')[0]
-
-                  host = host.split('?')[0]
-
-                  if host:
-                      domains[host] += 1
-
-              for x in domain_pattern.findall(text):
-                  if "." in x:
-                      domains[x] += 1
-
-              for x in api_pattern.findall(text):
-                  endpoints[x] += 1
-
-              for x in special_pattern.findall(text):
-                  if ".m3u8" in x.lower() or ".mpd" in x.lower():
-                      media_urls[x] += 1
-
-              lower = text.lower()
-
-              if "firebase" in lower:
-                  firebase.append(str(path))
-
-              if "retrofit" in lower:
-                  retrofit.append(str(path))
-
-              if "okhttp" in lower:
-                  okhttp.append(str(path))
-
-              if "webview" in lower:
-                  webview.append(str(path))
-
-          out = []
-
-          out.append("# Static API Analysis")
-          out.append("")
-          out.append(f"Files scanned: **{scanned}**")
-          out.append("")
-
-          out.append("## URLs")
-          out.append("")
-
-          for x, count in urls.most_common(300):
-              out.append(f"- `{x}` ({count})")
-
-          out.append("")
-
-          out.append("## Domains")
-          out.append("")
-
-          for x, count in domains.most_common(300):
-              out.append(f"- `{x}` ({count})")
-
-          out.append("")
-
-          out.append("## API-like Endpoints")
-          out.append("")
-
-          for x, count in endpoints.most_common(300):
-              out.append(f"- `{x}` ({count})")
-
-          out.append("")
-
-          out.append("## HLS / DASH References")
-          out.append("")
-
-          for x, count in media_urls.most_common(200):
-              out.append(f"- `{x}` ({count})")
-
-          out.append("")
-
-          out.append("## Firebase References")
-          out.append("")
-
-          for x in sorted(set(firebase))[:200]:
-              out.append(f"- `{x}`")
-
-          out.append("")
-
-          out.append("## Retrofit References")
-          out.append("")
-
-          for x in sorted(set(retrofit))[:200]:
-              out.append(f"- `{x}`")
-
-          out.append("")
-
-          out.append("## OkHttp References")
-          out.append("")
-
-          for x in sorted(set(okhttp))[:200]:
-              out.append(f"- `{x}`")
-
-          out.append("")
-
-          out.append("## WebView References")
-          out.append("")
-
-          for x in sorted(set(webview))[:200]:
-              out.append(f"- `{x}`")
-
-          Path("STATIC_API_ANALYSIS.md").write_text(
-              "\n".join(out),
-              encoding="utf-8"
-          )
-          PY
-
-          python3 work/static_api.py
-
-      # =========================================================
-      # 8. INSTALL ANDROID SDK
-      # =========================================================
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: ''
-
-      # =========================================================
-      # 9. INSTALL EMULATOR
-      # =========================================================
-      - name: Install emulator packages
+      - name: Install tools
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y unzip strings grep file
 
-          sdkmanager \
-            "platform-tools" \
-            "emulator" \
-            "platforms;android-35" \
-            "system-images;android-35;google_apis;x86_64"
-
-      # =========================================================
-      # 10. CREATE AVD
-      # =========================================================
-      - name: Create Android emulator
+      - name: Download JADX
         run: |
-          echo "no" | avdmanager create avd \
-            -n api_capture \
-            -k "system-images;android-35;google_apis;x86_64" \
-            --force
+          wget -q https://github.com/skylot/jadx/releases/latest/download/jadx-1.5.3.zip -O jadx.zip
+          mkdir -p jadx
+          unzip -q jadx.zip -d jadx
 
-      # =========================================================
-      # 11. START EMULATOR
-      # =========================================================
-      - name: Start emulator
+      - name: Decode APK
         run: |
-          nohup emulator \
-            -avd api_capture \
-            -no-window \
-            -no-audio \
-            -no-boot-anim \
-            -gpu swiftshader_indirect \
-            -no-snapshot \
-            > work/emulator.log 2>&1 &
+          mkdir -p decoded
+          unzip -q "${{ github.event.inputs.apk_path }}" -d decoded
 
-          adb wait-for-device
-
-          echo "Waiting for Android..."
-
-          for i in $(seq 1 60); do
-            BOOT=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-
-            if [ "$BOOT" = "1" ]; then
-              echo "Android boot completed"
-              break
-            fi
-
-            sleep 2
-          done
-
-          adb shell settings put global window_animation_scale 0
-          adb shell settings put global transition_animation_scale 0
-          adb shell settings put global animator_duration_scale 0
-
-      # =========================================================
-      # 12. INSTALL APK
-      # =========================================================
-      - name: Install APK
+      - name: Run JADX
         run: |
-          adb install -r work/app.apk
+          mkdir -p jadx-output
+          ./jadx/bin/jadx \
+            -d jadx-output \
+            "${{ github.event.inputs.apk_path }}" \
+            || true
 
-          echo "Installed packages:"
-          adb shell pm list packages | grep -F "$(cat work/package.txt)" || true
-
-      # =========================================================
-      # 13. START LOGCAT CAPTURE
-      # =========================================================
-      - name: Start logcat capture
+      - name: Extract URLs
         run: |
-          adb logcat -c
-
-          nohup adb logcat -v threadtime \
-            > work/runtime-logcat.txt 2>&1 &
-
-          echo $! > work/logcat.pid
-
-      # =========================================================
-      # 14. LAUNCH APP
-      # =========================================================
-      - name: Launch APK
-        run: |
-          PACKAGE=$(cat work/package.txt)
-
-          echo "Launching: $PACKAGE"
-
-          adb shell monkey \
-            -p "$PACKAGE" \
-            -c android.intent.category.LAUNCHER \
-            1 || true
-
-          sleep 15
-
-      # =========================================================
-      # 15. RUNTIME INFORMATION
-      # =========================================================
-      - name: Collect runtime information
-        run: |
-          mkdir -p work/runtime
-
-          PACKAGE=$(cat work/package.txt)
-
-          adb shell dumpsys package "$PACKAGE" \
-            > work/runtime/package-dumpsys.txt || true
-
-          adb shell dumpsys activity activities \
-            > work/runtime/activity.txt || true
-
-          adb shell dumpsys window windows \
-            > work/runtime/windows.txt || true
-
-          adb shell dumpsys netstats \
-            > work/runtime/netstats.txt || true
-
-          adb shell dumpsys connectivity \
-            > work/runtime/connectivity.txt || true
-
-          adb shell dumpsys wifi \
-            > work/runtime/wifi.txt || true
-
-          adb shell ps -A \
-            > work/runtime/processes.txt || true
-
-      # =========================================================
-      # 16. COLLECT NETWORK SOCKET INFORMATION
-      # =========================================================
-      - name: Collect runtime network sockets
-        run: |
-          adb shell "cat /proc/net/tcp" \
-            > work/runtime/tcp.txt || true
-
-          adb shell "cat /proc/net/tcp6" \
-            > work/runtime/tcp6.txt || true
-
-          adb shell "cat /proc/net/udp" \
-            > work/runtime/udp.txt || true
-
-          adb shell "cat /proc/net/udp6" \
-            > work/runtime/udp6.txt || true
-
-      # =========================================================
-      # 17. SEARCH LOGCAT FOR API REFERENCES
-      # =========================================================
-      - name: Analyze runtime API references
-        run: |
-          cat > work/runtime_api.py <<'PY'
-          import re
-          from pathlib import Path
-          from collections import Counter
-
-          files = [
-              Path("work/runtime-logcat.txt"),
-              Path("work/runtime/package-dumpsys.txt"),
-              Path("work/runtime/activity.txt"),
-              Path("work/runtime/connectivity.txt"),
-          ]
-
-          text = ""
-
-          for f in files:
-              if f.exists():
-                  text += "\n" + f.read_text(
-                      encoding="utf-8",
-                      errors="ignore"
-                  )
-
-          urls = Counter()
-          endpoints = Counter()
-          media = Counter()
-          domains = Counter()
-
-          url_re = re.compile(
-              r'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]+',
-              re.I
-          )
-
-          api_re = re.compile(
-              r'(?i)'
-              r'(?:'
-              r'/api/[A-Za-z0-9_./?=&:%-]+|'
-              r'/v[0-9]+/[A-Za-z0-9_./?=&:%-]+|'
-              r'/graphql[A-Za-z0-9_./?=&:%-]*'
-              r')'
-          )
-
-          for x in url_re.findall(text):
-              urls[x] += 1
-
-              host = re.sub(
-                  r'^https?://',
-                  '',
-                  x,
-                  flags=re.I
-              ).split('/')[0]
-
-              if host:
-                  domains[host] += 1
-
-              if ".m3u8" in x.lower() or ".mpd" in x.lower():
-                  media[x] += 1
-
-          for x in api_re.findall(text):
-              endpoints[x] += 1
-
-          out = []
-
-          out.append("# Runtime API Analysis")
-          out.append("")
-          out.append(
-              "Runtime traffic visible in logs/system information. "
-              "HTTPS payloads are not decrypted."
-          )
-          out.append("")
-
-          out.append("## Visible URLs")
-          out.append("")
-
-          for x, n in urls.most_common(300):
-              out.append(f"- `{x}` ({n})")
-
-          out.append("")
-
-          out.append("## Visible Domains")
-          out.append("")
-
-          for x, n in domains.most_common(300):
-              out.append(f"- `{x}` ({n})")
-
-          out.append("")
-
-          out.append("## API-like Paths")
-          out.append("")
-
-          for x, n in endpoints.most_common(300):
-              out.append(f"- `{x}` ({n})")
-
-          out.append("")
-
-          out.append("## HLS / DASH References")
-          out.append("")
-
-          for x, n in media.most_common(200):
-              out.append(f"- `{x}` ({n})")
-
-          Path("RUNTIME_API_ANALYSIS.md").write_text(
-              "\n".join(out),
-              encoding="utf-8"
-          )
-          PY
-
-          python3 work/runtime_api.py
-
-      # =========================================================
-      # 18. COMBINE REPORT
-      # =========================================================
-      - name: Create final API report
-        run: |
-          PACKAGE=$(cat work/package.txt)
+          mkdir -p report
 
           {
-            echo "# API ANALYSIS"
-            echo
-            echo "Package: \`$PACKAGE\`"
-            echo
-            echo "Generated: $(date -u)"
-            echo
-            echo "---"
-            echo
-            cat STATIC_API_ANALYSIS.md
-            echo
-            echo "---"
-            echo
-            cat RUNTIME_API_ANALYSIS.md
-          } > API_ANALYSIS.md
+            echo "===== URLS ====="
+            grep -RhoE 'https?://[^"'\''<>[:space:]]+' \
+              decoded jadx-output 2>/dev/null \
+              | sort -u || true
 
-      # =========================================================
-      # 19. SAVE RAW LOGS
-      # =========================================================
-      - name: Prepare analysis files
+            echo
+            echo "===== API-LIKE PATHS ====="
+            grep -RhoE '["'\''][^"'\'']*(/api/|/v[0-9]+/|graphql|rest/)[^"'\'']*["'\'']' \
+              jadx-output decoded 2>/dev/null \
+              | sort -u || true
+
+            echo
+            echo "===== WEBSOCKET URLS ====="
+            grep -RhoE 'wss?://[^"'\''<>[:space:]]+' \
+              decoded jadx-output 2>/dev/null \
+              | sort -u || true
+          } > report/api-report.txt
+
+      - name: Search API keywords
         run: |
-          mkdir -p api-capture
+          {
+            echo "===== API KEYWORDS ====="
+            grep -RniE \
+              'baseUrl|baseURL|apiUrl|apiURL|endpoint|graphql|retrofit|okhttp|authorization|bearer|firebaseio|supabase|client_id' \
+              jadx-output decoded 2>/dev/null \
+              | head -n 500 || true
+          } >> report/api-report.txt
 
-          cp API_ANALYSIS.md api-capture/
-          cp STATIC_API_ANALYSIS.md api-capture/
-          cp RUNTIME_API_ANALYSIS.md api-capture/
-          cp work/runtime-logcat.txt api-capture/ || true
-          cp work/emulator.log api-capture/ || true
-
-          cp work/runtime/*.txt api-capture/ || true
-
-          echo "Reports:"
-          find api-capture -type f -maxdepth 2 -print
-
-      # =========================================================
-      # 20. GIT COMMIT
-      # =========================================================
-      - name: Commit reports
+      - name: Scan native libraries
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          {
+            echo
+            echo "===== NATIVE LIBRARY STRINGS ====="
 
-          git add API_ANALYSIS.md
-          git add STATIC_API_ANALYSIS.md
-          git add RUNTIME_API_ANALYSIS.md
-          git add api-capture/
+            find decoded -type f \( \
+              -name "*.so" -o \
+              -name "*.dex" \
+            \) -print0 |
+            while IFS= read -r -d '' file; do
+              echo
+              echo "--- $file ---"
+              strings "$file" 2>/dev/null |
+                grep -E 'https?://|wss?://|/api/|/v[0-9]+/' |
+                sort -u || true
+            done
+          } >> report/api-report.txt
 
-          git diff --cached --quiet || \
-            git commit -m "Add APK API and runtime analysis"
-
-      # =========================================================
-      # 21. PUSH
-      # =========================================================
-      - name: Push reports
+      - name: APK information
         run: |
-          git push
+          {
+            echo
+            echo "===== APK FILE ====="
+            file "${{ github.event.inputs.apk_path }}"
+
+            echo
+            echo "===== APK CONTENT ====="
+            find decoded -maxdepth 2 -type f | sort | head -n 300
+          } >> report/api-report.txt
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-api-report
+          path: report/
+          retention-days: 7
+
+      - name: Show report
+        run: |
+          echo "========== API REPORT =========="
+          cat report/api-report.txt
