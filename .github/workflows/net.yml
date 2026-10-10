@@ -1,0 +1,124 @@
+name: APK API Static Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_path:
+        description: "APK path in repository"
+        required: true
+        default: "app.apk"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check APK
+        run: |
+          test -f "${{ github.event.inputs.apk_path }}" || {
+            echo "APK not found: ${{ github.event.inputs.apk_path }}"
+            exit 1
+          }
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip strings grep file
+
+      - name: Download JADX
+        run: |
+          wget -q https://github.com/skylot/jadx/releases/latest/download/jadx-1.5.3.zip -O jadx.zip
+          mkdir -p jadx
+          unzip -q jadx.zip -d jadx
+
+      - name: Decode APK
+        run: |
+          mkdir -p decoded
+          unzip -q "${{ github.event.inputs.apk_path }}" -d decoded
+
+      - name: Run JADX
+        run: |
+          mkdir -p jadx-output
+          ./jadx/bin/jadx \
+            -d jadx-output \
+            "${{ github.event.inputs.apk_path }}" \
+            || true
+
+      - name: Extract URLs
+        run: |
+          mkdir -p report
+
+          {
+            echo "===== URLS ====="
+            grep -RhoE 'https?://[^"'\''<>[:space:]]+' \
+              decoded jadx-output 2>/dev/null \
+              | sort -u || true
+
+            echo
+            echo "===== API-LIKE PATHS ====="
+            grep -RhoE '["'\''][^"'\'']*(/api/|/v[0-9]+/|graphql|rest/)[^"'\'']*["'\'']' \
+              jadx-output decoded 2>/dev/null \
+              | sort -u || true
+
+            echo
+            echo "===== WEBSOCKET URLS ====="
+            grep -RhoE 'wss?://[^"'\''<>[:space:]]+' \
+              decoded jadx-output 2>/dev/null \
+              | sort -u || true
+          } > report/api-report.txt
+
+      - name: Search API keywords
+        run: |
+          {
+            echo "===== API KEYWORDS ====="
+            grep -RniE \
+              'baseUrl|baseURL|apiUrl|apiURL|endpoint|graphql|retrofit|okhttp|authorization|bearer|firebaseio|supabase|client_id' \
+              jadx-output decoded 2>/dev/null \
+              | head -n 500 || true
+          } >> report/api-report.txt
+
+      - name: Scan native libraries
+        run: |
+          {
+            echo
+            echo "===== NATIVE LIBRARY STRINGS ====="
+
+            find decoded -type f \( \
+              -name "*.so" -o \
+              -name "*.dex" \
+            \) -print0 |
+            while IFS= read -r -d '' file; do
+              echo
+              echo "--- $file ---"
+              strings "$file" 2>/dev/null |
+                grep -E 'https?://|wss?://|/api/|/v[0-9]+/' |
+                sort -u || true
+            done
+          } >> report/api-report.txt
+
+      - name: APK information
+        run: |
+          {
+            echo
+            echo "===== APK FILE ====="
+            file "${{ github.event.inputs.apk_path }}"
+
+            echo
+            echo "===== APK CONTENT ====="
+            find decoded -maxdepth 2 -type f | sort | head -n 300
+          } >> report/api-report.txt
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-api-report
+          path: report/
+          retention-days: 7
+
+      - name: Show report
+        run: |
+          echo "========== API REPORT =========="
+          cat report/api-report.txt
