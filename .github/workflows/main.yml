@@ -14,10 +14,9 @@ jobs:
     timeout-minutes: 10
 
     env:
-      IPTV_HOST: ${{ secrets.IPTV_HOST }}
-      IPTV_USERNAME: ${{ secrets.IPTV_USERNAME }}
-      IPTV_PASSWORD: ${{ secrets.IPTV_PASSWORD }}
-
+      IPTV_HOST: "http://gott-smart.net:80"
+      IPTV_USERNAME: "MAG2UHMP6K"
+      IPTV_PASSWORD: "2poLclRsIj"
     steps:
       - name: Install dependencies
         shell: bash
