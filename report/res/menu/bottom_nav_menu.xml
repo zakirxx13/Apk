@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<menu
-  xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:icon="@drawable/ic_home_black_24dp" android:id="@id/navigation_home" android:title="@string/title_home" />
-    <item android:icon="@drawable/ic_tv_mode" android:id="@id/navigation_tv_mode" android:title="@string/title_tv_mode" />
-    <item android:icon="@drawable/ic_dashboard_black_24dp" android:id="@id/navigation_cats" android:title="@string/title_cats" />
-    <item android:icon="@drawable/ic_highlights" android:id="@id/navigation_highlights" android:title="@string/title_high" />
-</menu>

@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/_4sdp" android:layout_marginBottom="@dimen/_4sdp"
-  xmlns:android="http://schemas.android.com/apk/res/android">
-    <WebView android:id="@id/bottom_web_ad" android:background="@android:color/transparent" android:layout_width="match_parent" android:layout_height="60.0dp" android:layout_marginLeft="@dimen/_3sdp" android:layout_marginRight="@dimen/_3sdp" android:minHeight="60.0dp" />
-</FrameLayout>

@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout android:gravity="center" android:orientation="vertical" android:padding="@dimen/_25sdp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="match_parent"
-  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto">
-    <LinearLayout android:gravity="center" android:layout_gravity="center" android:orientation="vertical" android:id="@id/error_container" android:visibility="gone" android:layout_width="wrap_content" android:layout_height="wrap_content">
-        <TextView android:textAppearance="@style/TextAppearance.Material3.BodyLarge" android:id="@id/error_txt" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textAlignment="center" />
-        <com.google.android.material.button.MaterialButton android:id="@id/retry_btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="@dimen/_5sdp" android:text="@string/retry" app:icon="@drawable/ic_refresh" />
-    </LinearLayout>
-    <TextView android:textAppearance="@style/TextAppearance.Material3.TitleMedium" android:layout_gravity="center" android:id="@id/empty_error" android:visibility="gone" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_margin="@dimen/_25sdp" />
-</FrameLayout>

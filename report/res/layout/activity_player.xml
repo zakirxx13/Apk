@@ -1,3 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<app.blaze.spofficialApp.activities.SportzfyPlayerView android:id="@id/player_view" android:background="@color/black" android:layout_width="match_parent" android:layout_height="match_parent" android:keepScreenOn="true" app:auto_show="false" app:hide_on_touch="false" app:keep_content_on_player_reset="false" app:resize_mode="fill" app:surface_type="texture_view"
-  xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" />
