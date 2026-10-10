@@ -5,148 +5,289 @@ on:
   schedule:
     - cron: "0 */6 * * *"
 
+permissions:
+  contents: read
+
 jobs:
   export:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     env:
-      IPTV_HOST: "http://gott-smart.net:80"
-      IPTV_USERNAME: "MAG2UHMP6K"
-      IPTV_PASSWORD: "2poLclRsIj"
+      IPTV_HOST: ${{ secrets.IPTV_HOST }}
+      IPTV_USERNAME: ${{ secrets.IPTV_USERNAME }}
+      IPTV_PASSWORD: ${{ secrets.IPTV_PASSWORD }}
 
     steps:
-      - name: Fetch IPTV data and generate playlists
+      - name: Install dependencies
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl jq python3
 
-          mkdir -p output
+      - name: Check configuration and connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          BASE="${IPTV_HOST%/}/player_api.php?username=${IPTV_USERNAME}&password=${IPTV_PASSWORD}"
-
-          echo "Fetching account information..."
-          AUTH=$(curl -fsSL --max-time 60 "$BASE")
-
-          if ! echo "$AUTH" | jq -e '.user_info.auth == 1' >/dev/null 2>&1; then
-            echo "Authentication failed."
+          if [ -z "$IPTV_HOST" ] ||
+             [ -z "$IPTV_USERNAME" ] ||
+             [ -z "$IPTV_PASSWORD" ]; then
+            echo "::error::Configure IPTV_HOST, IPTV_USERNAME and IPTV_PASSWORD in GitHub Actions Secrets."
             exit 1
           fi
 
-          echo "Authentication successful."
+          echo "Checking server connectivity..."
 
-          api_get() {
-            ACTION="$1"
-            curl -fsSL \
-              --max-time 120 \
-              "${BASE}&action=${ACTION}"
+          if ! curl \
+            --silent \
+            --show-error \
+            --location \
+            --connect-timeout 15 \
+            --max-time 30 \
+            --retry 2 \
+            --retry-delay 3 \
+            --output /tmp/server_response.txt \
+            --write-out '%{http_code}' \
+            "${IPTV_HOST%/}/" \
+            > /tmp/http_status.txt; then
+            echo "::error::Connection failed. Check server availability and network access."
+            exit 1
+          fi
+
+          echo "HTTP status: $(cat /tmp/http_status.txt)"
+
+      - name: Fetch authorized API catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+
+          python3 <<'PY'
+          import json
+          import os
+          import time
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+          from urllib.error import URLError, HTTPError
+
+          host = os.environ["IPTV_HOST"].rstrip("/")
+          username = os.environ["IPTV_USERNAME"]
+          password = os.environ["IPTV_PASSWORD"]
+
+          credentials = {
+              "username": username,
+              "password": password
           }
 
-          echo "Fetching live streams..."
-          LIVE=$(api_get "get_live_streams")
+          def get_json(params):
+              url = host + "/player_api.php?" + urlencode(params)
+              last_error = None
 
-          echo "Fetching VOD streams..."
-          VOD=$(api_get "get_vod_streams")
+              for attempt in range(3):
+                  try:
+                      request = Request(
+                          url,
+                          headers={"Accept": "application/json"}
+                      )
 
-          echo "Fetching series..."
-          SERIES=$(api_get "get_series")
+                      with urlopen(request, timeout=45) as response:
+                          body = response.read()
 
-          echo "Validating API responses..."
+                      data = json.loads(body.decode("utf-8"))
 
-          echo "$LIVE" | jq empty
-          echo "$VOD" | jq empty
-          echo "$SERIES" | jq empty
+                      if not isinstance(data, (dict, list)):
+                          raise ValueError("Unexpected response type")
 
-          echo "Generating standard M3U..."
+                      return data
 
-          {
-            echo "#EXTM3U"
+                  except (
+                      URLError, HTTPError, TimeoutError,
+                      json.JSONDecodeError, ValueError
+                  ) as exc:
+                      last_error = exc
 
-            echo "$LIVE" |
-              jq -r --arg host "$IPTV_HOST" \
-                --arg user "$IPTV_USERNAME" \
-                --arg pass "$IPTV_PASSWORD" '
-                .[] |
-                .stream_id as $id |
-                (.name // "Unknown") as $name |
-                (.stream_icon // "") as $logo |
-                (.category_name // "") as $group |
-                "#EXTINF:-1" +
-                (if $logo != "" then " tvg-logo=\"" + $logo + "\"" else "" end) +
-                (if $group != "" then " group-title=\"" + $group + "\"" else "" end) +
-                "," + $name + "\n" +
-                ($host + "/live/" +
-                 $user + "/" +
-                 $pass + "/" +
-                 ($id|tostring) + ".ts")
-              '
+                      if attempt < 2:
+                          time.sleep(2 * (attempt + 1))
 
-            echo "$VOD" |
-              jq -r --arg host "$IPTV_HOST" \
-                --arg user "$IPTV_USERNAME" \
-                --arg pass "$IPTV_PASSWORD" '
-                .[] |
-                .stream_id as $id |
-                (.name // "Unknown") as $name |
-                (.stream_icon // .cover // "") as $logo |
-                (.category_name // "") as $group |
-                "#EXTINF:-1" +
-                (if $logo != "" then " tvg-logo=\"" + $logo + "\"" else "" end) +
-                (if $group != "" then " group-title=\"" + $group + "\"" else "" end) +
-                "," + $name + "\n" +
-                ($host + "/movie/" +
-                 $user + "/" +
-                 $pass + "/" +
-                 ($id|tostring) + ".mp4")
-              '
+              raise RuntimeError(
+                  "API request failed: " +
+                  type(last_error).__name__
+              ) from last_error
 
-          } > output/playlist.m3u
+          print("Checking API authentication...")
 
-          echo "Generating JSON-content M3U..."
+          auth = get_json(credentials)
+          user_info = (
+              auth.get("user_info", {})
+              if isinstance(auth, dict) else {}
+          )
 
-          jq -n \
-            --arg host "$IPTV_HOST" \
-            --arg generated "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            --argjson live "$LIVE" \
-            --argjson vod "$VOD" \
-            --argjson series "$SERIES" '
-            {
-              generated_at: $generated,
-              server: $host,
-              live: $live,
-              vod: $vod,
-              series: $series
-            }
-          ' > output/playlist-json.m3u
+          if str(user_info.get("auth", "")) != "1":
+              raise SystemExit(
+                  "Authentication failed or API format is unsupported."
+              )
 
-          echo "Generating catalog.json..."
+          actions = {
+              "live_categories": "get_live_categories",
+              "live": "get_live_streams",
+              "vod_categories": "get_vod_categories",
+              "vod": "get_vod_streams",
+              "series_categories": "get_series_categories",
+              "series": "get_series"
+          }
 
-          jq -n \
-            --arg generated "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            --argjson live "$LIVE" \
-            --argjson vod "$VOD" \
-            --argjson series "$SERIES" '
-            {
-              generated_at: $generated,
-              live: $live,
-              vod: $vod,
-              series: $series
-            }
-          ' > output/catalog.json
+          catalog = {}
 
-          echo "Validating generated files..."
+          for key, action in actions.items():
+              print("Fetching " + key + "...")
+
+              data = get_json({
+                  **credentials,
+                  "action": action
+              })
+
+              if not isinstance(data, list):
+                  raise RuntimeError(
+                      "Unexpected response format for " + key
+                  )
+
+              catalog[key] = data
+              print(f"{key}: {len(data)} items")
+
+          os.makedirs("output", exist_ok=True)
+
+          def save_json(path, data):
+              with open(path, "w", encoding="utf-8") as file:
+                  json.dump(
+                      data,
+                      file,
+                      ensure_ascii=False,
+                      indent=2
+                  )
+
+          timestamp = time.strftime(
+              "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+          )
+
+          document = {
+              "generated_at": timestamp,
+              "catalog": catalog
+          }
+
+          save_json("output/catalog.json", document)
+          save_json("output/playlist-json.m3u", document)
+
+          def clean(value):
+              return str(value or "").replace(
+                  "\r", " "
+              ).replace("\n", " ")
+
+          def quote(value):
+              return clean(value).replace(
+                  "\\", "\\\\"
+              ).replace('"', '\\"')
+
+          def category_lookup(items):
+              return {
+                  str(item["category_id"]): item.get(
+                      "category_name", ""
+                  )
+                  for item in items
+                  if isinstance(item, dict)
+                  and item.get("category_id") is not None
+              }
+
+          live_categories = category_lookup(
+              catalog["live_categories"]
+          )
+
+          vod_categories = category_lookup(
+              catalog["vod_categories"]
+          )
+
+          lines = ["#EXTM3U"]
+
+          def append_item(item, category_map, stream_type):
+              stream_id = item.get("stream_id")
+
+              if stream_id is None:
+                  return
+
+              name = clean(item.get("name", "Unknown"))
+              logo = quote(
+                  item.get("stream_icon") or
+                  item.get("cover") or ""
+              )
+
+              group = quote(
+                  item.get("category_name") or
+                  category_map.get(
+                      str(item.get("category_id")), ""
+                  )
+              )
+
+              attributes = []
+
+              if logo:
+                  attributes.append(f'tvg-logo="{logo}"')
+
+              if group:
+                  attributes.append(f'group-title="{group}"')
+
+              metadata = " ".join(attributes)
+
+              if metadata:
+                  lines.append(
+                      f"#EXTINF:-1 {metadata},{name}"
+                  )
+              else:
+                  lines.append(f"#EXTINF:-1,{name}")
+
+              if stream_type == "live":
+                  path = "live"
+                  extension = "ts"
+              else:
+                  path = "movie"
+                  extension = "mp4"
+
+              lines.append(
+                  f"{host}/{path}/{username}/"
+                  f"{password}/{stream_id}.{extension}"
+              )
+
+          for item in catalog["live"]:
+              append_item(item, live_categories, "live")
+
+          for item in catalog["vod"]:
+              append_item(item, vod_categories, "vod")
+
+          with open(
+              "output/playlist.m3u",
+              "w",
+              encoding="utf-8"
+          ) as file:
+              file.write("\n".join(lines) + "\n")
+
+          print("Playlist generation completed.")
+          PY
+
+      - name: Validate generated files
+        shell: bash
+        run: |
+          set -euo pipefail
 
           test -s output/playlist.m3u
           test -s output/playlist-json.m3u
           test -s output/catalog.json
 
-          head -n 1 output/playlist.m3u | grep -Fx "#EXTM3U"
+          test "$(head -n 1 output/playlist.m3u)" = "#EXTM3U"
 
           jq empty output/playlist-json.m3u
           jq empty output/catalog.json
 
-          echo ""
-          echo "Export completed."
-          echo "Files:"
+          echo "Validation successful."
           ls -lh output/
 
       - name: Upload playlists
@@ -155,3 +296,4 @@ jobs:
           name: iptv-playlists
           path: output/
           if-no-files-found: error
+          retention-days: 7
