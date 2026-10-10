@@ -1,385 +1,356 @@
-name: APK Static API Scan
-
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            wget \
-            unzip \
-            grep \
-            binutils \
-            file \
-            python3
-
-      - name: Download APK
-        run: |
-          mkdir -p work/apk
-
-          wget \
-            --https-only \
-            --timeout=60 \
-            --tries=3 \
-            --show-progress \
-            -O work/apk/app.apk \
-            "https://sport-zfy.com/wp-content/apk/Sportzfy_v32.0.apk"
-
-          file work/apk/app.apk
-          ls -lh work/apk/app.apk
-
-      - name: Validate APK
-        run: |
-          unzip -t work/apk/app.apk > /dev/null
-          echo "APK archive is valid."
-
-      - name: Download JADX
-        run: |
-          mkdir -p work/tools
-
-          JADX_VERSION="1.5.3"
-
-          wget -q \
-            "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip" \
-            -O work/tools/jadx.zip
-
-          mkdir -p work/tools/jadx
-
-          unzip -q \
-            work/tools/jadx.zip \
-            -d work/tools/jadx
-
-          chmod +x work/tools/jadx/bin/jadx
-
-          ./work/tools/jadx/bin/jadx --version
-
-      - name: Extract APK
-        run: |
-          mkdir -p work/decoded
-
-          unzip -q \
-            work/apk/app.apk \
-            -d work/decoded
-
-      - name: Decompile APK
-        run: |
-          mkdir -p work/source
-
-          ./work/tools/jadx/bin/jadx \
-            --output-dir work/source \
-            work/apk/app.apk \
-            || true
-
-      - name: Create report directory
-        run: |
-          mkdir -p report
-
-      - name: Extract HTTP HTTPS URLs
-        run: |
-          {
-            echo "========================================"
-            echo "HTTP / HTTPS URLS"
-            echo "========================================"
-            echo
-
-            grep -RhoE \
-              'https?://[^"'\''<>[:space:]]+' \
-              work/source work/decoded 2>/dev/null \
-              | sed 's/[),;}]$//' \
-              | sort -u \
-              || true
-
-          } > report/http-https-urls.txt
-
-      - name: Extract WebSocket URLs
-        run: |
-          {
-            echo "========================================"
-            echo "WEBSOCKET URLS"
-            echo "========================================"
-            echo
-
-            grep -RhoE \
-              'wss?://[^"'\''<>[:space:]]+' \
-              work/source work/decoded 2>/dev/null \
-              | sed 's/[),;}]$//' \
-              | sort -u \
-              || true
-
-          } > report/websocket-urls.txt
-
-      - name: Extract API paths
-        run: |
-          {
-            echo "========================================"
-            echo "API-LIKE PATHS"
-            echo "========================================"
-            echo
-
-            grep -RhoE \
-              '["'\''][^"'\'']*/(api|api/v[0-9]+|v[0-9]+|graphql|rest)/[^"'\'']*["'\'']' \
-              work/source work/decoded 2>/dev/null \
-              | sort -u \
-              || true
-
-          } > report/api-paths.txt
-
-      - name: Extract hostnames
-        run: |
-          {
-            echo "========================================"
-            echo "HOSTNAMES"
-            echo "========================================"
-            echo
-
-            grep -RhoE \
-              'https?://[^/"'\''<>[:space:]]+' \
-              work/source work/decoded 2>/dev/null \
-              | sed -E 's#https?://##' \
-              | sed 's/:.*//' \
-              | sort -u \
-              || true
-
-          } > report/hostnames.txt
-
-      - name: Detect networking libraries
-        run: |
-          {
-            echo "========================================"
-            echo "NETWORKING REFERENCES"
-            echo "========================================"
-            echo
-
-            grep -RniE \
-              'Retrofit|OkHttp|Volley|HttpURLConnection|URLConnection|WebView|GraphQL|Firebase|Supabase|Cronet' \
-              work/source 2>/dev/null \
-              | head -n 1000 \
-              || true
-
-          } > report/networking-references.txt
-
-      - name: Scan native libraries
-        run: |
-          {
-            echo "========================================"
-            echo "NATIVE LIBRARY URL SCAN"
-            echo "========================================"
-            echo
-
-            find work/decoded \
-              -type f \
-              -name "*.so" \
-              -print0 |
-            while IFS= read -r -d '' lib; do
-
-              echo
-              echo "----------------------------------------"
-              echo "FILE: $lib"
-              echo "----------------------------------------"
-
-              strings "$lib" 2>/dev/null |
-                grep -E \
-                  'https?://|wss?://|/api/|/v[0-9]+/' |
-                sort -u \
-                || true
-
-            done
-
-          } > report/native-library-scan.txt
-
-      - name: Scan DEX files
-        run: |
-          {
-            echo "========================================"
-            echo "DEX URL SCAN"
-            echo "========================================"
-            echo
-
-            find work/decoded \
-              -type f \
-              -name "*.dex" \
-              -print0 |
-            while IFS= read -r -d '' dex; do
-
-              echo
-              echo "----------------------------------------"
-              echo "FILE: $dex"
-              echo "----------------------------------------"
-
-              strings "$dex" 2>/dev/null |
-                grep -E \
-                  'https?://|wss?://|/api/|/v[0-9]+/' |
-                sort -u \
-                || true
-
-            done
-
-          } > report/dex-scan.txt
-
-      - name: APK information
-        run: |
-          {
-            echo "========================================"
-            echo "APK INFORMATION"
-            echo "========================================"
-            echo
-
-            echo "File:"
-            file work/apk/app.apk
-
-            echo
-            echo "Size:"
-            du -h work/apk/app.apk
-
-            echo
-            echo "Extracted files:"
-            find work/decoded \
-              -maxdepth 2 \
-              -type f \
-              | sort \
-              | head -n 500
-
-          } > report/apk-information.txt
-
-      - name: Create API-SUMMARY.md
-        run: |
-          mkdir -p docs
-
-          cat > docs/API-SUMMARY.md <<'EOF'
-          # APK API Static Analysis
-
-          > Automatically generated by GitHub Actions.
-
-          ## APK
-
-          - Source: `https://sport-zfy.com/wp-content/apk/Sportzfy_v32.0.apk`
-          - Analysis type: Static APK analysis
-          - Android emulator: Not used
-
-          ## HTTP / HTTPS URLs
-
-          ```text
-          EOF
-
-          cat report/http-https-urls.txt >> docs/API-SUMMARY.md
-
-          cat >> docs/API-SUMMARY.md <<'EOF'
-          ```
-
-          ## WebSocket URLs
-
-          ```text
-          EOF
-
-          cat report/websocket-urls.txt >> docs/API-SUMMARY.md
-
-          cat >> docs/API-SUMMARY.md <<'EOF'
-          ```
-
-          ## API-like Paths
-
-          ```text
-          EOF
-
-          cat report/api-paths.txt >> docs/API-SUMMARY.md
-
-          cat >> docs/API-SUMMARY.md <<'EOF'
-          ```
-
-          ## Hostnames
-
-          ```text
-          EOF
-
-          cat report/hostnames.txt >> docs/API-SUMMARY.md
-
-          cat >> docs/API-SUMMARY.md <<'EOF'
-          ```
-
-          ## Networking Libraries / References
-
-          ```text
-          EOF
-
-          cat report/networking-references.txt >> docs/API-SUMMARY.md
-
-          cat >> docs/API-SUMMARY.md <<'EOF'
-          ```
-
-          ## Native Library Findings
-
-          ```text
-          EOF
-
-          cat report/native-library-scan.txt >> docs/API-SUMMARY.md
-
-          cat >> docs/API-SUMMARY.md <<'EOF'
-          ```
-
-          ## DEX Findings
-
-          ```text
-          EOF
-
-          cat report/dex-scan.txt >> docs/API-SUMMARY.md
-
-          cat >> docs/API-SUMMARY.md <<'EOF'
-          ```
-
-          ## Important
-
-          This is a static analysis report. It does not guarantee that every
-          runtime API request used by the application has been discovered.
-
-          Dynamically generated endpoints, encrypted configuration, runtime-only
-          URLs, authenticated requests, or requests created after application
-          startup may not appear in this report.
-          EOF
-
-      - name: Show generated summary
-        run: |
-          echo "========================================"
-          echo "API-SUMMARY.md"
-          echo "========================================"
-
-          cat docs/API-SUMMARY.md
-
-      - name: Upload reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-static-analysis-report
-          path: |
-            report/
-            docs/API-SUMMARY.md
-          retention-days: 7
-
-      - name: Commit and push summary
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add docs/API-SUMMARY.md
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "docs: update APK API summary"
-
-          git push
+<?php
+
+$host = 'http://gott-smart.net:80';
+$username = 'MAG2UHMP6K';
+$password = '2poLclRsIj';
+
+$outDir = __DIR__ . '/output';
+
+if (!is_dir($outDir)) {
+    mkdir($outDir, 0755, true);
+}
+
+function apiGet($url) {
+    $ch = curl_init($url);
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_USERAGENT => 'Mozilla/5.0',
+        CURLOPT_HTTPHEADER => [
+            'Accept: application/json'
+        ]
+    ]);
+
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+    curl_close($ch);
+
+    if ($response === false || $code >= 400) {
+        throw new Exception("HTTP/API error: " . $code . " " . $error);
+    }
+
+    $data = json_decode($response, true);
+
+    if (!is_array($data)) {
+        throw new Exception("Invalid JSON response");
+    }
+
+    return $data;
+}
+
+function buildUrl($host, $username, $password, $action = '') {
+    $url = rtrim($host, '/') .
+        '/player_api.php?username=' .
+        rawurlencode($username) .
+        '&password=' .
+        rawurlencode($password);
+
+    if ($action !== '') {
+        $url .= '&action=' . rawurlencode($action);
+    }
+
+    return $url;
+}
+
+function clean($value) {
+    return trim((string)$value);
+}
+
+function addM3UItem(&$m3u, $item) {
+
+    $name = clean(
+        $item['name'] ??
+        $item['title'] ??
+        $item['stream_display_name'] ??
+        'Unknown'
+    );
+
+    $logo = clean(
+        $item['stream_icon'] ??
+        $item['cover'] ??
+        $item['cover_big'] ??
+        ''
+    );
+
+    $category = clean(
+        $item['category_name'] ??
+        $item['category'] ??
+        ''
+    );
+
+    $id = clean(
+        $item['stream_id'] ??
+        $item['id'] ??
+        ''
+    );
+
+    $url = clean(
+        $item['stream_url'] ??
+        $item['url'] ??
+        ''
+    );
+
+    if ($url === '') {
+        return;
+    }
+
+    $m3u .= '#EXTINF:-1';
+
+    if ($id !== '') {
+        $m3u .= ' tvg-id="' . htmlspecialchars($id, ENT_QUOTES) . '"';
+    }
+
+    if ($logo !== '') {
+        $m3u .= ' tvg-logo="' . htmlspecialchars($logo, ENT_QUOTES) . '"';
+    }
+
+    if ($category !== '') {
+        $m3u .= ' group-title="' . htmlspecialchars($category, ENT_QUOTES) . '"';
+    }
+
+    $m3u .= ',' . str_replace(["\r", "\n"], '', $name) . "\n";
+    $m3u .= $url . "\n\n";
+}
+
+try {
+
+    /*
+     * Authentication / account information
+     */
+    $auth = apiGet(
+        buildUrl($host, $username, $password)
+    );
+
+    if (isset($auth['user_info']['auth']) &&
+        (int)$auth['user_info']['auth'] !== 1) {
+
+        throw new Exception('Authentication failed');
+    }
+
+    /*
+     * Fetch categories
+     */
+    $liveCategories = apiGet(
+        buildUrl(
+            $host,
+            $username,
+            $password,
+            'get_live_categories'
+        )
+    );
+
+    $vodCategories = apiGet(
+        buildUrl(
+            $host,
+            $username,
+            $password,
+            'get_vod_categories'
+        )
+    );
+
+    $seriesCategories = apiGet(
+        buildUrl(
+            $host,
+            $username,
+            $password,
+            'get_series_categories'
+        )
+    );
+
+    /*
+     * Fetch streams
+     */
+    $live = apiGet(
+        buildUrl(
+            $host,
+            $username,
+            $password,
+            'get_live_streams'
+        )
+    );
+
+    $vod = apiGet(
+        buildUrl(
+            $host,
+            $username,
+            $password,
+            'get_vod_streams'
+        )
+    );
+
+    $series = apiGet(
+        buildUrl(
+            $host,
+            $username,
+            $password,
+            'get_series'
+        )
+    );
+
+    /*
+     * Normalize data
+     */
+    $records = [];
+
+    foreach ($live as $item) {
+        $records[] = [
+            'type' => 'live',
+            'id' => $item['stream_id'] ?? null,
+            'name' => $item['name'] ?? '',
+            'logo' => $item['stream_icon'] ?? '',
+            'category_id' => $item['category_id'] ?? '',
+            'category' => $item['category_name'] ?? '',
+            'url' => $item['stream_url'] ?? '',
+            'raw' => $item
+        ];
+    }
+
+    foreach ($vod as $item) {
+
+        $streamId = $item['stream_id'] ?? '';
+
+        $url = '';
+
+        if ($streamId !== '') {
+            $url =
+                rtrim($host, '/') .
+                '/movie/' .
+                rawurlencode($username) .
+                '/' .
+                rawurlencode($password) .
+                '/' .
+                rawurlencode($streamId) .
+                '.mp4';
+        }
+
+        $records[] = [
+            'type' => 'vod',
+            'id' => $streamId,
+            'name' => $item['name'] ?? '',
+            'logo' => $item['stream_icon'] ?? ($item['cover'] ?? ''),
+            'category_id' => $item['category_id'] ?? '',
+            'category' => $item['category_name'] ?? '',
+            'url' => $url,
+            'raw' => $item
+        ];
+    }
+
+    foreach ($series as $item) {
+
+        $records[] = [
+            'type' => 'series',
+            'id' => $item['series_id'] ?? '',
+            'name' => $item['name'] ?? '',
+            'logo' => $item['cover'] ?? '',
+            'category_id' => $item['category_id'] ?? '',
+            'category' => $item['category_name'] ?? '',
+            'url' => '',
+            'raw' => $item
+        ];
+    }
+
+    /*
+     * Remove duplicates
+     */
+    $unique = [];
+
+    foreach ($records as $record) {
+
+        $key = strtolower(
+            $record['type'] . '|' .
+            $record['id'] . '|' .
+            $record['name']
+        );
+
+        $unique[$key] = $record;
+    }
+
+    $records = array_values($unique);
+
+    /*
+     * Standard M3U
+     */
+    $m3u = "#EXTM3U\n\n";
+
+    foreach ($records as $record) {
+
+        if ($record['url'] === '') {
+            continue;
+        }
+
+        addM3UItem($m3u, [
+            'name' => $record['name'],
+            'stream_icon' => $record['logo'],
+            'category_name' => $record['category'],
+            'stream_id' => $record['id'],
+            'stream_url' => $record['url']
+        ]);
+    }
+
+    /*
+     * JSON data
+     */
+    $jsonData = [
+        'generated_at' => date('c'),
+        'source' => $host,
+        'total' => count($records),
+        'items' => $records
+    ];
+
+    $json = json_encode(
+        $jsonData,
+        JSON_PRETTY_PRINT |
+        JSON_UNESCAPED_SLASHES |
+        JSON_UNESCAPED_UNICODE
+    );
+
+    /*
+     * Save files
+     */
+    file_put_contents(
+        $outDir . '/playlist.m3u',
+        $m3u
+    );
+
+    file_put_contents(
+        $outDir . '/playlist-json.m3u',
+        $json
+    );
+
+    /*
+     * Also save raw normalized JSON
+     */
+    file_put_contents(
+        $outDir . '/catalog.json',
+        $json
+    );
+
+    header('Content-Type: application/json');
+
+    echo json_encode([
+        'success' => true,
+        'message' => 'Export completed',
+        'total_items' => count($records),
+        'files' => [
+            'playlist.m3u',
+            'playlist-json.m3u',
+            'catalog.json'
+        ]
+    ], JSON_PRETTY_PRINT);
+
+} catch (Throwable $e) {
+
+    http_response_code(500);
+
+    header('Content-Type: application/json');
+
+    echo json_encode([
+        'success' => false,
+        'error' => $e->getMessage()
+    ], JSON_PRETTY_PRINT);
+}
