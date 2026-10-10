@@ -1,4 +1,4 @@
-name: IPTV Playlist Exporter
+name: IPTV Connection Diagnostics
 
 on:
   workflow_dispatch:
@@ -9,290 +9,72 @@ permissions:
   contents: read
 
 jobs:
-  export:
+  diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     env:
       IPTV_HOST: "http://gott-smart.net:80"
-      IPTV_USERNAME: "MAG2UHMP6K"
-      IPTV_PASSWORD: "2poLclRsIj"
+
     steps:
-      - name: Install dependencies
+      - name: Check tools
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y curl jq python3
+          curl --version
+          python3 --version
 
-      - name: Check configuration and connectivity
+      - name: Diagnose DNS
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          if [ -z "$IPTV_HOST" ] ||
-             [ -z "$IPTV_USERNAME" ] ||
-             [ -z "$IPTV_PASSWORD" ]; then
-            echo "::error::Configure IPTV_HOST, IPTV_USERNAME and IPTV_PASSWORD in GitHub Actions Secrets."
-            exit 1
+          HOST="${IPTV_HOST#http://}"
+          HOST="${HOST#https://}"
+          HOST="${HOST%%/*}"
+          HOST="${HOST%%:*}"
+
+          echo "Checking DNS for configured hostname..."
+
+          if getent ahosts "$HOST"; then
+            echo "DNS lookup completed."
+          else
+            echo "::warning::DNS lookup failed."
           fi
 
-          echo "Checking server connectivity..."
-
-          if ! curl \
-            --silent \
-            --show-error \
-            --location \
-            --connect-timeout 15 \
-            --max-time 30 \
-            --retry 2 \
-            --retry-delay 3 \
-            --output /tmp/server_response.txt \
-            --write-out '%{http_code}' \
-            "${IPTV_HOST%/}/" \
-            > /tmp/http_status.txt; then
-            echo "::error::Connection failed. Check server availability and network access."
-            exit 1
-          fi
-
-          echo "HTTP status: $(cat /tmp/http_status.txt)"
-
-      - name: Fetch authorized API catalog
+      - name: Test documented HTTP and HTTPS endpoints
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p output
+          set -uo pipefail
 
-          python3 <<'PY'
-          import json
-          import os
-          import time
-          from urllib.parse import urlencode
-          from urllib.request import Request, urlopen
-          from urllib.error import URLError, HTTPError
+          for URL in \
+            "http://gott-smart.net:80/" \
+            "https://gott-smart.net/"; do
 
-          host = os.environ["IPTV_HOST"].rstrip("/")
-          username = os.environ["IPTV_USERNAME"]
-          password = os.environ["IPTV_PASSWORD"]
+            echo ""
+            echo "Testing endpoint: $URL"
 
-          credentials = {
-              "username": username,
-              "password": password
-          }
+            if curl \
+              --silent \
+              --show-error \
+              --connect-timeout 10 \
+              --max-time 20 \
+              --output /dev/null \
+              --write-out \
+              'HTTP status: %{http_code}\nRemote IP: %{remote_ip}\n' \
+              "$URL"; then
 
-          def get_json(params):
-              url = host + "/player_api.php?" + urlencode(params)
-              last_error = None
+              echo "Connection request completed."
+            else
+              RESULT=$?
+              echo "Request failed with curl exit code: $RESULT"
+            fi
+          done
 
-              for attempt in range(3):
-                  try:
-                      request = Request(
-                          url,
-                          headers={"Accept": "application/json"}
-                      )
-
-                      with urlopen(request, timeout=45) as response:
-                          body = response.read()
-
-                      data = json.loads(body.decode("utf-8"))
-
-                      if not isinstance(data, (dict, list)):
-                          raise ValueError("Unexpected response type")
-
-                      return data
-
-                  except (
-                      URLError, HTTPError, TimeoutError,
-                      json.JSONDecodeError, ValueError
-                  ) as exc:
-                      last_error = exc
-
-                      if attempt < 2:
-                          time.sleep(2 * (attempt + 1))
-
-              raise RuntimeError(
-                  "API request failed: " +
-                  type(last_error).__name__
-              ) from last_error
-
-          print("Checking API authentication...")
-
-          auth = get_json(credentials)
-          user_info = (
-              auth.get("user_info", {})
-              if isinstance(auth, dict) else {}
-          )
-
-          if str(user_info.get("auth", "")) != "1":
-              raise SystemExit(
-                  "Authentication failed or API format is unsupported."
-              )
-
-          actions = {
-              "live_categories": "get_live_categories",
-              "live": "get_live_streams",
-              "vod_categories": "get_vod_categories",
-              "vod": "get_vod_streams",
-              "series_categories": "get_series_categories",
-              "series": "get_series"
-          }
-
-          catalog = {}
-
-          for key, action in actions.items():
-              print("Fetching " + key + "...")
-
-              data = get_json({
-                  **credentials,
-                  "action": action
-              })
-
-              if not isinstance(data, list):
-                  raise RuntimeError(
-                      "Unexpected response format for " + key
-                  )
-
-              catalog[key] = data
-              print(f"{key}: {len(data)} items")
-
-          os.makedirs("output", exist_ok=True)
-
-          def save_json(path, data):
-              with open(path, "w", encoding="utf-8") as file:
-                  json.dump(
-                      data,
-                      file,
-                      ensure_ascii=False,
-                      indent=2
-                  )
-
-          timestamp = time.strftime(
-              "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-          )
-
-          document = {
-              "generated_at": timestamp,
-              "catalog": catalog
-          }
-
-          save_json("output/catalog.json", document)
-          save_json("output/playlist-json.m3u", document)
-
-          def clean(value):
-              return str(value or "").replace(
-                  "\r", " "
-              ).replace("\n", " ")
-
-          def quote(value):
-              return clean(value).replace(
-                  "\\", "\\\\"
-              ).replace('"', '\\"')
-
-          def category_lookup(items):
-              return {
-                  str(item["category_id"]): item.get(
-                      "category_name", ""
-                  )
-                  for item in items
-                  if isinstance(item, dict)
-                  and item.get("category_id") is not None
-              }
-
-          live_categories = category_lookup(
-              catalog["live_categories"]
-          )
-
-          vod_categories = category_lookup(
-              catalog["vod_categories"]
-          )
-
-          lines = ["#EXTM3U"]
-
-          def append_item(item, category_map, stream_type):
-              stream_id = item.get("stream_id")
-
-              if stream_id is None:
-                  return
-
-              name = clean(item.get("name", "Unknown"))
-              logo = quote(
-                  item.get("stream_icon") or
-                  item.get("cover") or ""
-              )
-
-              group = quote(
-                  item.get("category_name") or
-                  category_map.get(
-                      str(item.get("category_id")), ""
-                  )
-              )
-
-              attributes = []
-
-              if logo:
-                  attributes.append(f'tvg-logo="{logo}"')
-
-              if group:
-                  attributes.append(f'group-title="{group}"')
-
-              metadata = " ".join(attributes)
-
-              if metadata:
-                  lines.append(
-                      f"#EXTINF:-1 {metadata},{name}"
-                  )
-              else:
-                  lines.append(f"#EXTINF:-1,{name}")
-
-              if stream_type == "live":
-                  path = "live"
-                  extension = "ts"
-              else:
-                  path = "movie"
-                  extension = "mp4"
-
-              lines.append(
-                  f"{host}/{path}/{username}/"
-                  f"{password}/{stream_id}.{extension}"
-              )
-
-          for item in catalog["live"]:
-              append_item(item, live_categories, "live")
-
-          for item in catalog["vod"]:
-              append_item(item, vod_categories, "vod")
-
-          with open(
-              "output/playlist.m3u",
-              "w",
-              encoding="utf-8"
-          ) as file:
-              file.write("\n".join(lines) + "\n")
-
-          print("Playlist generation completed.")
-          PY
-
-      - name: Validate generated files
+      - name: Summarize results
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-
-          test -s output/playlist.m3u
-          test -s output/playlist-json.m3u
-          test -s output/catalog.json
-
-          test "$(head -n 1 output/playlist.m3u)" = "#EXTM3U"
-
-          jq empty output/playlist-json.m3u
-          jq empty output/catalog.json
-
-          echo "Validation successful."
-          ls -lh output/
-
-      - name: Upload playlists
-        uses: actions/upload-artifact@v4
-        with:
-          name: iptv-playlists
-          path: output/
-          if-no-files-found: error
-          retention-days: 7
+          echo "Diagnostics completed."
+          echo "Review the preceding output for DNS, protocol, and connection errors."
+          echo "A successful root-page request does not guarantee API availability."
